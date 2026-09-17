@@ -225,6 +225,7 @@ async function loadIssues() {
       cover: `${sourceBase}/pagina-01.webp`, pages: Array.from({ length: 12 }, (_, index) => `${sourceBase}/pagina-${String(index + 1).padStart(2, '0')}.webp`)
     });
   }
+  state.issues.sort((a, b) => Number(b.number) - Number(a.number));
   state.filtered = [...state.issues];
   updateTotals();
   $('#scanStatus').textContent = `${state.issues.length} edições sincronizadas`;
