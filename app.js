@@ -218,6 +218,12 @@ async function loadIssues() {
       featured: false, tags: [String(number)], pageCount: 0, cover: '', pages: [], sourceType: 'pdf',
       pdf: `./arquivos/${String(number).padStart(3, '0')}.pdf`
     }));
+    const sourceBase = 'https://www.ovd.com.br/ftp/GRAFICOS/teste/aplicativo/acervo-digital/acervo/arquivos/edicao-0142';
+    state.issues.unshift({
+      id: '0142', number: 142, title: 'Edição nº 142', eyebrow: 'Revista OVD', date: '2022-08', year: 2022,
+      category: 'Economia', description: '', featured: true, tags: ['economia', 'negócios', 'ovd'], pageCount: 12,
+      cover: `${sourceBase}/pagina-01.webp`, pages: Array.from({ length: 12 }, (_, index) => `${sourceBase}/pagina-${String(index + 1).padStart(2, '0')}.webp`)
+    });
   }
   state.filtered = [...state.issues];
   updateTotals();

@@ -25,7 +25,7 @@
 @media(max-width:580px){.book:not(.single) canvas{max-width:50%}}
 
 /* Fotografia institucional em segundo plano */
-.archive-ambient{inset:0;background-image:url('/assets/fachada-ovd.webp');background-position:center 47%;background-size:cover;filter:saturate(.88) brightness(.94);opacity:.86;transform:none;transition:none}.archive:before{background:linear-gradient(180deg,rgba(5,7,6,.38) 0%,rgba(5,7,6,.44) 44%,rgba(5,7,6,.68) 100%),radial-gradient(ellipse at center,rgba(5,7,6,.04) 0%,rgba(5,7,6,.34) 88%)}
+.archive-ambient{inset:0;background-image:url('./assets/fachada-ovd.webp');background-position:center 47%;background-size:cover;filter:saturate(.88) brightness(.94);opacity:.86;transform:none;transition:none}.archive:before{background:linear-gradient(180deg,rgba(5,7,6,.38) 0%,rgba(5,7,6,.44) 44%,rgba(5,7,6,.68) 100%),radial-gradient(ellipse at center,rgba(5,7,6,.04) 0%,rgba(5,7,6,.34) 88%)}
 @media(max-width:700px){.archive-ambient{background-position:35% center;opacity:.8}.archive:before{background:linear-gradient(180deg,rgba(5,7,6,.42),rgba(5,7,6,.56) 65%,rgba(5,7,6,.74))}}
 
 /* Folhas em perspectiva no hover - sem vinco de lombada */
