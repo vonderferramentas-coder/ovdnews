@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f4f3ef">
+  <title>OVD News — Acervo digital</title>
+  <link rel="stylesheet" href="/styles.css?v=20260915-25">
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="OVD News — início">
+      <span class="brand-mark">OVD</span><span class="brand-name">NEWS</span>
+    </a>
+    <button class="command-trigger" id="commandTrigger" type="button" aria-label="Abrir busca" aria-expanded="false">
+      <span class="search-icon" aria-hidden="true"></span>
+      <span>Buscar no acervo</span>
+      <kbd>/</kbd>
+    </button>
+    <nav class="top-actions" aria-label="Navegação principal">
+      <button class="year-chip active" type="button" data-year="all">Todas</button>
+      <button class="round-btn" id="infoButton" type="button" aria-label="Sobre o acervo">i</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="archive" aria-labelledby="archiveTitle">
+      <div class="archive-ambient" id="archiveAmbient" aria-hidden="true"></div>
+      <div class="archive-heading">
+        <p>Acervo digital OVD News</p>
+        <h1 id="archiveTitle">Edição nº —</h1>
+        <span id="archiveDate">Selecione uma revista</span>
+      </div>
+      <div class="coverflow-wrap">
+        <button class="stage-arrow stage-arrow-left" id="prevIssue" aria-label="Edição anterior">←</button>
+        <div class="coverflow" id="coverflow" role="list" aria-live="polite"></div>
+        <button class="stage-arrow stage-arrow-right" id="nextIssue" aria-label="Próxima edição">→</button>
+      </div>
+      <div class="archive-footer">
+        <span id="carouselPosition">01 / 04</span>
+        <div class="archive-stats">
+          <span><strong id="issueCount">—</strong> edições</span>
+          <span><strong id="pageCount">—</strong> páginas</span>
+          <span class="active-caption" id="activeCaption"></span>
+        </div>
+        <span>Arraste ou use as setas</span>
+      </div>
+    </section>
+
+    <section class="all-issues" aria-labelledby="allTitle">
+      <div class="section-heading compact">
+        <div><p class="kicker"><span></span> Biblioteca</p><h2 id="allTitle">Todas as edições</h2></div>
+        <button class="sort-button" id="sortButton" type="button">Mais recentes <span>↓</span></button>
+      </div>
+      <div class="issue-grid" id="issueGrid"></div>
+      <p class="empty-state" id="emptyState" hidden>Nenhuma edição encontrada para esta busca.</p>
+    </section>
+  </main>
+
+  <footer><span>OVD News · Memória que inspira o futuro</span><span id="scanStatus">Atualizado automaticamente</span></footer>
+
+  <div class="command-backdrop" id="commandBackdrop" hidden>
+    <section class="command-panel" role="dialog" aria-modal="true" aria-labelledby="commandTitle">
+      <div class="command-input-row">
+        <span class="search-icon" aria-hidden="true"></span>
+        <label class="sr-only" id="commandTitle" for="searchInput">Buscar no acervo</label>
+        <input id="searchInput" type="search" placeholder="Busque por edição, ano ou assunto..." autocomplete="off">
+        <kbd>ESC</kbd>
+      </div>
+      <div class="command-body">
+        <p class="command-label">Atalhos</p>
+        <button class="command-item" data-command="latest"><span class="command-icon">↘</span><span><strong>Ver edição mais recente</strong><small>Abrir a primeira revista do acervo</small></span><kbd>↵</kbd></button>
+        <button class="command-item" data-command="all"><span class="command-icon">⌘</span><span><strong>Mostrar todas as edições</strong><small>Limpar filtros da biblioteca</small></span></button>
+        <div class="search-results" id="searchResults"></div>
+      </div>
+      <div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> navegar</span><span><kbd>↵</kbd> abrir</span></div>
+    </section>
+  </div>
+
+  <div class="reader" id="reader" hidden role="dialog" aria-modal="true" aria-label="Leitor da revista">
+    <div class="reader-backdrop"></div>
+    <header class="reader-header">
+      <button class="reader-brand" id="closeReader" type="button" aria-label="Fechar leitor">← <span>Voltar ao acervo</span></button>
+      <div class="reader-title"><strong id="readerTitle"></strong><span id="readerDate"></span></div>
+      <div class="reader-actions">
+        <button id="toggleThumbs" aria-label="Miniaturas" title="Miniaturas">▦</button>
+        <span class="reader-action-separator"></span>
+        <button id="zoomOut" aria-label="Diminuir zoom" title="Diminuir zoom">−</button>
+        <span class="zoom-level" id="zoomLevel">100%</span>
+        <button id="zoomIn" aria-label="Aumentar zoom" title="Aumentar zoom">＋</button>
+        <button id="resetZoom" aria-label="Restaurar zoom" title="Restaurar zoom">↺</button>
+        <span class="reader-action-separator"></span>
+        <button id="toggleFullscreen" aria-label="Tela cheia" title="Tela cheia">⛶</button>
+        <button id="closeReaderX" aria-label="Fechar" title="Fechar">×</button>
+      </div>
+    </header>
+    <aside class="thumbnail-rail" id="thumbnailRail" hidden></aside>
+    <div class="reader-stage" id="readerStage">
+      <button class="page-arrow left" id="prevPage" aria-label="Página anterior">←</button>
+      <div class="book-shell" id="bookShell">
+        <div class="book" id="book"></div>
+        <div class="page-shadow"></div>
+        <div class="book-gutter" aria-hidden="true"></div>
+        <span class="page-corner-hint page-corner-left" aria-hidden="true">‹</span>
+        <span class="page-corner-hint page-corner-right" aria-hidden="true">›</span>
+      </div>
+      <button class="page-arrow right" id="nextPage" aria-label="Próxima página">→</button>
+    </div>
+    <footer class="reader-footer"><button id="readerFirst" aria-label="Primeira página">|‹</button><button id="readerPrev" aria-label="Página anterior">‹</button><span id="pageIndicator">Capa · 1 de 12</span><div class="reader-progress"><i id="readerProgress"></i></div><button id="readerNext" aria-label="Próxima página">›</button><button id="readerLast" aria-label="Última página">›|</button></footer>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/vendor/page-flip.browser.js" defer></script>
+  <script src="/app.js?v=20260915-25" defer></script>
+</body>
+</html>
