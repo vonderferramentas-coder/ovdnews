@@ -1,0 +1,7 @@
+node_modules/
+.pnpm-store/
+.codex-staging-soft-covers/
+.DS_Store
+Thumbs.db
+*.log
+.cache/
