@@ -30,8 +30,8 @@ function placeholderCover(issue) {
 }
 
 async function getPdfModule() {
-  if (!pdfModulePromise) pdfModulePromise = import('/vendor/pdf.min.mjs').then(module => {
-    module.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.mjs';
+  if (!pdfModulePromise) pdfModulePromise = import('./vendor/pdf.min.mjs').then(module => {
+    module.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.mjs';
     return module;
   });
   return pdfModulePromise;
@@ -207,16 +207,22 @@ function observePdfCovers() {
 async function loadIssues() {
   try {
     const response = await fetch('/api/edicoes', { cache: 'no-store' });
+    if (!response.ok) throw new Error('API indisponível');
     const data = await response.json();
     state.issues = data.issues;
-    state.filtered = [...state.issues];
-    updateTotals();
-    $('#scanStatus').textContent = `${state.issues.length} edições sincronizadas`;
-    render();
   } catch (error) {
-    $('#emptyState').hidden = false;
-    $('#emptyState').textContent = 'Não foi possível carregar o acervo.';
+    // ponytail: mantenha esta lista em sincronia ao adicionar PDFs no Pages; use uma API quando o acervo precisar ser atualizado sem publicar.
+    state.issues = [1, 2, 3, ...Array.from({ length: 36 }, (_, index) => index + 5)].map(number => ({
+      id: `pdf-${String(number).padStart(3, '0')}`, number, title: `Edição nº ${number}`,
+      eyebrow: 'Revista OVD', date: '', year: 0, category: 'Acervo PDF', description: '',
+      featured: false, tags: [String(number)], pageCount: 0, cover: '', pages: [], sourceType: 'pdf',
+      pdf: `./arquivos/${String(number).padStart(3, '0')}.pdf`
+    }));
   }
+  state.filtered = [...state.issues];
+  updateTotals();
+  $('#scanStatus').textContent = `${state.issues.length} edições sincronizadas`;
+  render();
 }
 
 function render() { renderCoverflow(); renderGrid(); requestAnimationFrame(observePdfCovers); }
