@@ -223,7 +223,12 @@ async function fetchIssuesData() {
     return await response.json();
   } catch {
     const response = await fetch('edicoes.json', { cache: 'no-store' });
-    return response.json();
+    const data = await response.json();
+    data.issues.forEach(issue => {
+      if (issue.cover?.startsWith('/capas/')) issue.cover = '';
+      if (issue.pdf?.startsWith('/')) issue.pdf = `.${issue.pdf}`;
+    });
+    return data;
   }
 }
 
