@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#f4f3ef">
   <title>OVD News — Acervo digital</title>
-  <link rel="stylesheet" href="styles.css?v=20260916-20">
+  <link rel="stylesheet" href="styles.css?v=20260922-16">
 </head>
 <body>
   <div class="noise" aria-hidden="true"></div>
   <header class="topbar">
     <a class="brand" href="#" aria-label="OVD News — início">
-      <span class="brand-mark">OVD</span><span class="brand-name">NEWS</span>
+      <img class="brand-logo" src="assets/ovd-news-logo.png" alt="OVD News">
     </a>
     <button class="command-trigger" id="commandTrigger" type="button" aria-label="Abrir busca" aria-expanded="false">
       <span class="search-icon" aria-hidden="true"></span>
@@ -98,6 +98,7 @@
         <div class="book" id="book"></div>
         <div class="page-shadow"></div>
         <div class="book-gutter" aria-hidden="true"></div>
+        <div class="book-magnifier" id="bookMagnifier" aria-hidden="true"></div>
         <span class="page-corner-hint page-corner-left" aria-hidden="true">‹</span>
         <span class="page-corner-hint page-corner-right" aria-hidden="true">›</span>
       </div>
@@ -107,8 +108,19 @@
   </div>
 
   <div class="toast" id="toast" role="status"></div>
+  <script src="vendor/jquery-3.7.1.min.js" defer></script>
+  <script src="vendor/turn-3.min.js?v=20260922-3" defer></script>
   <script src="vendor/page-flip.browser.js" defer></script>
   <script src="edicoes-data.js?v=20260916-1" defer></script>
-  <script src="app.js?v=20260916-27" defer></script>
+  <script src="app.js?v=20260922-54" defer></script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+

@@ -1,12 +1,15 @@
 const state = { issues: [], filtered: [], active: 0, sortDesc: true, readerIssue: null, page: 0, libraryPage: 1, query: '', year: 'all', zoom: 1 };
-const LIBRARY_PAGE_SIZE = 12;
+const LIBRARY_PAGE_SIZE = 10;
 let pdfModulePromise;
 let pdfCoverObserver;
 let pageFlipInstance = null;
+let turnBookInstance = null;
+const READER_ENGINE = 'turnjs'; // Use 'stpageflip' para retornar ao leitor anterior.
 let readerRenderToken = 0;
 let readerThumbsRendered = false;
 let readerFlipPending = false;
 let readerLayout = [];
+let bookSettleTimer = 0;
 const coverQueue = [];
 let runningCoverJobs = 0;
 const COVER_CACHE = 'ovd-news-covers-v1';
@@ -220,7 +223,7 @@ async function fetchIssuesData() {
   try {
     const response = await fetch('/api/edicoes', { cache: 'no-store' });
     if (!response.ok) throw new Error('api indisponível');
-    return await response.json();
+return await response.json();
   } catch {
     const response = await fetch('edicoes.json', { cache: 'no-store' });
     const data = await response.json();
@@ -374,20 +377,10 @@ async function openReader(id, sourceImage = null) {
     applyZoom(); await initPageFlip(issue); closeCommand();
   };
   if (!animated) return reveal();
-  let targetImage;
-  sourceImage.style.viewTransitionName = 'issue-cover';
-  const transition = document.startViewTransition(async () => {
-    sourceImage.style.viewTransitionName = '';
-    await reveal();
-    targetImage = els.book.querySelector('[data-reader-page="1"]');
-    if (targetImage) {
-      targetImage.style.viewTransitionName = 'issue-cover';
-      if (targetImage.decode) await targetImage.decode().catch(() => undefined);
-    }
-  });
+  // Mantém a abertura suave, sem compartilhar a imagem da capa com o livro.
+  // A camada compartilhada criava um retângulo branco durante o redimensionamento.
+  const transition = document.startViewTransition(reveal);
   await transition.finished.catch(() => undefined);
-  sourceImage.style.viewTransitionName = '';
-  if (targetImage) targetImage.style.viewTransitionName = '';
   requestAnimationFrame(() => els.reader.classList.remove('is-opening'));
 }
 
@@ -400,15 +393,15 @@ async function renderPdfThumbnails(issue) {
 
 function resetPageFlip() {
   readerRenderToken += 1;
-  if (!pageFlipInstance) return;
-  try { pageFlipInstance.destroy(); } catch {}
+  if (pageFlipInstance) try { pageFlipInstance.destroy(); } catch {}
+  if (turnBookInstance) try { turnBookInstance.turn('destroy'); } catch {}
   pageFlipInstance = null;
+  turnBookInstance = null;
   const mount = document.createElement('div');
   mount.className = 'book'; mount.id = 'book';
-  $('#bookShell').insertBefore(mount, $('#bookShell').firstChild);
+  els.book.replaceWith(mount);
   els.book = mount;
 }
-
 function closeReader() { cancelPageTurn(); resetPageFlip(); readerFlipPending = false; els.reader.classList.remove('is-opening'); els.reader.hidden = true; document.body.style.overflow = ''; state.readerIssue = null; state.zoom = 1; }
 
 function getSpreadStart(page) { if (page === 0) return 0; return page % 2 === 0 ? page - 1 : page; }
@@ -422,17 +415,18 @@ function setBookSpreadOffset(spreadIndex = pageFlipInstance?.getPageCollection()
   if (!pageFlipInstance || !Number.isInteger(spreadIndex)) return;
   const collection = pageFlipInstance.getPageCollection();
   const spread = collection.getSpread()[spreadIndex] || [];
+  const realPageIndex = spread.find(index => Number.isInteger(readerLayout[index]));
+  const realPageCount = spread.filter(index => Number.isInteger(readerLayout[index])).length;
   let offset = 0;
-  if (pageFlipInstance.getOrientation() === 'landscape' && spread.length === 1) {
-    const pageNumber = readerLayout[spread[0]];
-    const page = els.book.querySelectorAll('.stf__item')[spread[0]];
+  if (pageFlipInstance.getOrientation() === 'landscape' && realPageCount === 1) {
+    const page = els.book.querySelectorAll('.stf__item')[realPageIndex];
     const width = page?.getBoundingClientRect().width || pageFlipInstance.getBoundsRect().pageWidth;
-    offset = (pageNumber === 1 ? -1 : 1) * width / 2;
+    offset = spread.indexOf(realPageIndex) === 0 ? width / 2 : -width / 2;
   }
   els.book.style.setProperty('--book-offset', `${offset}px`);
 }
-
 function syncReaderControls() {
+  if (READER_ENGINE === 'turnjs') return syncTurnJsControls();
   const issue = state.readerIssue; if (!issue) return;
   const portrait = pageFlipInstance?.getOrientation() === 'portrait';
   const collection = pageFlipInstance?.getPageCollection();
@@ -471,41 +465,103 @@ async function hydrateReaderPages(issue, token) {
   }
 }
 
-async function initPageFlip(issue) {
+function syncTurnJsControls() {
+  const issue = state.readerIssue;
+  if (!issue || !turnBookInstance) return;
+  const turnView = turnBookInstance.turn('view') || [];
+  const visible = turnView.filter(Number.isInteger).map(page => page - 1).filter(page => page >= 0 && page < issue.pageCount);
+  if (!visible.length) return;
+  const start = Math.min(...visible);
+  const end = Math.max(...visible) + 1;
+  state.page = start;
+  els.book.style.removeProperty('--book-offset');
+  const turnSize = turnBookInstance.turn('size');
+  els.book.style.setProperty('--turnjs-offset', !turnView[0] ? `${-Math.round(turnSize.width / 4)}px` : !turnView[1] ? `${Math.round(turnSize.width / 4)}px` : '0px');
+  $('#bookShell').classList.toggle('book-opened', visible.length > 1);
+  $('#pageIndicator').textContent = start === 0 ? `Capa · 1 de ${issue.pageCount}` : `Páginas ${start + 1}${end > start + 1 ? `–${end}` : ''} de ${issue.pageCount}`;
+  $('#readerProgress').style.width = `${Math.min(100, (end / issue.pageCount) * 100)}%`;
+  $('#prevPage').disabled = $('#readerPrev').disabled = start === 0;
+  $('#nextPage').disabled = $('#readerNext').disabled = end >= issue.pageCount;
+  $('#readerFirst').disabled = start === 0;
+  $('#readerLast').disabled = end >= issue.pageCount;
+  els.thumbnailRail.querySelectorAll('button').forEach((button, index) => button.classList.toggle('active', index >= start && index < end));
+}
+
+function getTurnJsSize() {
+  const shell = $('#bookShell').getBoundingClientRect();
+  const aspect = 540 / 760;
+  let height = Math.max(352, Math.min(858, Math.floor(shell.height)));
+  let width = Math.round(height * aspect);
+  if (width * 2 > shell.width) { width = Math.floor(shell.width / 2); height = Math.round(width / aspect); }
+  return { width, height };
+}
+
+async function initTurnJs(issue) {
   resetPageFlip();
   const token = ++readerRenderToken;
-  els.book.classList.add('no-book-shift-transition');
   readerLayout = issue.pages.map((_, index) => index + 1);
+  els.book.classList.add('turnjs-book');
   els.book.innerHTML = readerLayout.map(pageNumber => {
     const initial = issue.pdf ? (pageNumber === 1 && issue.cover ? issue.cover : readerPagePlaceholder(pageNumber)) : issue.pages[pageNumber - 1];
     return `<div class="flip-page"><img data-reader-page="${pageNumber}" src="${initial}" alt="Página ${pageNumber} de ${issue.pageCount}"></div>`;
   }).join('');
-  pageFlipInstance = new St.PageFlip(els.book, {
+  const size = getTurnJsSize();
+  const $book = window.jQuery(els.book);
+  $book.turn({ width: size.width * 2, height: size.height, display: 'double', autoCenter: true, duration: 720, gradients: true, acceleration: true, elevation: 40, corners: 'all', cornerSize: 160, page: 1 });
+  turnBookInstance = $book;
+    $book.on('turning', () => { clearTimeout(bookSettleTimer); const shell = $('#bookShell'); shell.classList.add('is-page-flipping'); shell.classList.remove('book-settled'); });
+  $book.on('turned', () => { readerFlipPending = false; clearTimeout(gutterRestoreTimer); const shell = $('#bookShell'); shell.classList.remove('is-page-flipping'); shell.classList.remove('is-page-dragging'); syncTurnJsControls(); clearTimeout(bookSettleTimer); bookSettleTimer = setTimeout(() => shell.classList.add('book-settled'), 80); });  readerFlipPending = false;
+  syncTurnJsControls();
+  requestAnimationFrame(() => $('#bookShell').classList.add('book-settled'));
+  hydrateReaderPages(issue, token);
+}
+
+async function turnTurnJsPage(direction) {
+  const issue = state.readerIssue;
+  if (!turnBookInstance || !issue || readerFlipPending || !canTurnPage(direction)) return;
+  readerFlipPending = true;
+  direction > 0 ? turnBookInstance.turn('next') : turnBookInstance.turn('previous');
+  const targetPages = direction > 0 ? [state.page + 2, state.page + 3] : [state.page - 1, state.page];
+  Promise.all(targetPages.filter(page => page >= 1 && page <= issue.pageCount).map(page => hydrateReaderPage(issue, page))).catch(() => {});
+}
+async function initPageFlip(issue) {
+  if (READER_ENGINE === 'turnjs') return initTurnJs(issue);
+  resetPageFlip();
+  const token = ++readerRenderToken;
+  els.book.classList.add('no-book-shift-transition');
+  readerLayout = [null, ...issue.pages.map((_, index) => index + 1), null];
+  els.book.innerHTML = readerLayout.map(pageNumber => {
+    if (!Number.isInteger(pageNumber)) return '<div class="flip-page flip-spacer" aria-hidden="true"></div>';
+    const initial = issue.pdf ? (pageNumber === 1 && issue.cover ? issue.cover : readerPagePlaceholder(pageNumber)) : issue.pages[pageNumber - 1];
+    return `<div class="flip-page"><img data-reader-page="${pageNumber}" src="${initial}" alt="Página ${pageNumber} de ${issue.pageCount}"></div>`;
+  }).join('');  pageFlipInstance = new St.PageFlip(els.book, {
     width: 540, height: 760, size: 'stretch',
     minWidth: 250, maxWidth: 610, minHeight: 352, maxHeight: 858,
-    drawShadow: true, maxShadowOpacity: .46, flippingTime: 720,
+    drawShadow: false, maxShadowOpacity: 0, flippingTime: 720,
     autoSize: false, startPage: 0,
-    usePortrait: false, mobileScrollSupport: false, showCover: true,
+    usePortrait: false, mobileScrollSupport: false, useMouseEvents: true, showCover: false,
     showPageCorners: false, disableFlipByClick: true
   });
-  pageFlipInstance.on('flip', () => syncReaderControls());
   pageFlipInstance.on('changeState', event => {
     const isTurning = event.data === 'user_fold' || event.data === 'flipping';
-    $('#bookShell').classList.toggle('is-page-flipping', isTurning);
-    if (isTurning) requestAnimationFrame(() => {
-      const direction = pageFlipInstance?.getFlipController().getCalculation()?.getDirection();
-      const current = pageFlipInstance?.getPageCollection().getCurrentSpreadIndex();
-      if (Number.isInteger(direction) && Number.isInteger(current)) setBookSpreadOffset(current + (direction === 0 ? 1 : -1));
-    });
-    if (event.data === 'read') { readerFlipPending = false; requestAnimationFrame(() => setBookSpreadOffset()); }
+    const shell = $('#bookShell');
+    shell.classList.toggle('is-page-flipping', isTurning);
+    if (isTurning) {
+      clearTimeout(bookSettleTimer);
+      shell.classList.remove('book-settled');
+    }
+    if (event.data === 'read') {
+      readerFlipPending = false;
+      syncReaderControls();
+      clearTimeout(bookSettleTimer);
+      bookSettleTimer = setTimeout(() => shell.classList.add('book-settled'), 760);
+    }
   });
   pageFlipInstance.on('changeOrientation', event => {
     $('#bookShell').dataset.orientation = event.data;
     syncReaderControls();
   });
   pageFlipInstance.loadFromHTML([...els.book.querySelectorAll('.flip-page')]);
-  pageFlipInstance.getPage(0).setDensity('soft');
-  pageFlipInstance.getPage(issue.pageCount - 1).setDensity('soft');
   $('#bookShell').dataset.orientation = pageFlipInstance.getOrientation();
   readerFlipPending = false;
   syncReaderControls();
@@ -514,6 +570,7 @@ async function initPageFlip(issue) {
 }
 
 function renderPages() {
+  if (READER_ENGINE === 'turnjs') { if (turnBookInstance) turnBookInstance.turn('page', Math.min(state.readerIssue.pageCount, state.page + 1)); return; }
   if (!pageFlipInstance) return;
   pageFlipInstance.turnToPage(readerLayout.indexOf(state.page + 1));
   syncReaderControls();
@@ -527,6 +584,7 @@ function getTargetPageIndexes(direction) {
 }
 
 async function turnPage(direction) {
+  if (READER_ENGINE === 'turnjs') return turnTurnJsPage(direction);
   const issue = state.readerIssue;
   if (!pageFlipInstance || !issue || readerFlipPending) return;
   const pageIndexes = getTargetPageIndexes(direction);
@@ -534,10 +592,17 @@ async function turnPage(direction) {
   readerFlipPending = true;
   const ready = await Promise.all(pageIndexes.map(index => hydrateReaderPage(issue, index + 1)));
   if (!ready.every(Boolean) || state.readerIssue !== issue || !pageFlipInstance) { readerFlipPending = false; return; }
+  if (USE_CUSTOM_PAGE_TURN) {
+    const collection = pageFlipInstance.getPageCollection();
+    const target = collection.getSpread()[collection.getCurrentSpreadIndex() + direction] || [];
+    pageFlipInstance.turnToPage(target[0]);
+    readerFlipPending = false;
+    syncReaderControls();
+    return;
+  }
   direction > 0 ? pageFlipInstance.flipNext('bottom') : pageFlipInstance.flipPrev('bottom');
 }
-
-function applyZoom() {
+function applyZoom(center = true) {
   state.zoom = Math.max(.75, Math.min(2.5, state.zoom));
   $('#zoomLevel').textContent = `${Math.round(state.zoom * 100)}%`;
   $('#bookShell').style.setProperty('--reader-zoom', state.zoom);
@@ -547,13 +612,12 @@ function applyZoom() {
     $('#readerStage').scrollTo({ left: 0, top: 0 });
     return;
   }
-  requestAnimationFrame(() => {
+  if (center) requestAnimationFrame(() => {
     const stage = $('#readerStage');
     stage.scrollLeft = Math.max(0, (stage.scrollWidth - stage.clientWidth) / 2);
     stage.scrollTop = Math.max(0, (stage.scrollHeight - stage.clientHeight) / 2);
   });
 }
-
 function adjustZoom(delta, button) {
   const previous = state.zoom;
   state.zoom += delta;
@@ -563,6 +627,20 @@ function adjustZoom(delta, button) {
   $('#zoomLevel').animate([{opacity:.35,transform:`translateY(${delta>0?-4:4}px) scale(.92)`},{opacity:1,transform:'none'}],{duration:240,easing:'ease-out'});
 }
 
+function zoomAtPointer(delta, event) {
+  const previous = state.zoom;
+  state.zoom += delta;
+  state.zoom = Math.max(.75, Math.min(2.5, state.zoom));
+  if (state.zoom === previous) return;
+  const stage = $('#readerStage'), rect = stage.getBoundingClientRect();
+  const pointX = event.clientX - rect.left + stage.scrollLeft, pointY = event.clientY - rect.top + stage.scrollTop;
+  applyZoom(false);
+  requestAnimationFrame(() => {
+    const ratio = state.zoom / previous;
+    stage.scrollLeft = Math.max(0, pointX * ratio - (event.clientX - rect.left));
+    stage.scrollTop = Math.max(0, pointY * ratio - (event.clientY - rect.top));
+  });
+}
 const zoomPan = { active: false, pointerId: null, startX: 0, startY: 0, scrollLeft: 0, scrollTop: 0 };
 
 function finishZoomPan(event) {
@@ -573,8 +651,83 @@ function finishZoomPan(event) {
   Object.assign(zoomPan, { active: false, pointerId: null });
 }
 
+const USE_CUSTOM_PAGE_TURN = false; // Set false to restore the native PageFlip interaction.
 const pageTurn = { active: false, animating: false, pointerId: null, direction: 0, startX: 0, progress: 0, moved: false, leaf: null, underlay: null, source: null };
-
+let turnCornerClick = null;
+let turnCornerDragged = false;
+let gutterRestoreTimer = 0;
+const bookMagnifier = $('#bookMagnifier');
+function updateBookMagnifier(event) {
+  if (state.zoom > 1.01 || $('#bookShell').classList.contains('is-page-dragging')) return bookMagnifier.classList.remove('visible');
+  const image = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('#book img');
+  if (!image) return bookMagnifier.classList.remove('visible');
+  const rect = image.getBoundingClientRect();
+  const x = event.clientX - rect.left, y = event.clientY - rect.top, scale = 2.15, diameter = 220;
+  if (x < 0 || y < 0 || x > rect.width || y > rect.height) return bookMagnifier.classList.remove('visible');
+  const shell = $('#bookShell').getBoundingClientRect();
+  bookMagnifier.style.left = `${event.clientX - shell.left - diameter / 2}px`;
+  bookMagnifier.style.top = `${event.clientY - shell.top - diameter / 2}px`;
+  bookMagnifier.style.backgroundImage = `url("${image.currentSrc || image.src}")`;
+  bookMagnifier.style.backgroundSize = `${rect.width * scale}px ${rect.height * scale}px`;
+  bookMagnifier.style.backgroundPosition = `${diameter / 2 - x * scale}px ${diameter / 2 - y * scale}px`;
+  bookMagnifier.classList.add('visible');
+}
+$('#bookShell').addEventListener('pointermove', updateBookMagnifier);
+$('#bookShell').addEventListener('pointerleave', () => bookMagnifier.classList.remove('visible'));
+$('#bookShell').addEventListener('pointerdown', () => bookMagnifier.classList.remove('visible'));
+let wheelZoomFrame = 0, wheelZoomDelta = 0, wheelZoomEvent, wheelZoomSettle;
+$('#bookShell').addEventListener('wheel', event => {
+  if (!state.readerIssue || !event.deltaY) return;
+  event.preventDefault();
+  wheelZoomDelta += Math.sign(-event.deltaY) * .08;
+  wheelZoomEvent = event;
+  if (wheelZoomFrame) return;
+  wheelZoomFrame = requestAnimationFrame(() => {
+    const delta = Math.max(-.16, Math.min(.16, wheelZoomDelta));
+    wheelZoomDelta = 0; wheelZoomFrame = 0;
+    $('#bookShell').classList.add('is-wheel-zoom');
+    clearTimeout(wheelZoomSettle);
+    wheelZoomSettle = setTimeout(() => $('#bookShell').classList.remove('is-wheel-zoom'), 120);
+    zoomAtPointer(delta, wheelZoomEvent);
+  });
+}, { passive: false });
+$('#bookShell').addEventListener('pointerdown', event => {
+  if (READER_ENGINE === 'turnjs' && event.button === 0) {
+    clearTimeout(gutterRestoreTimer);
+    const shell = $('#bookShell');
+    shell.classList.add('is-page-dragging');
+    shell.classList.remove('book-settled');
+    turnCornerDragged = false;
+    turnCornerClick = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  }
+});
+$('#bookShell').addEventListener('pointermove', event => {
+  if (turnCornerClick?.pointerId === event.pointerId && Math.hypot(event.clientX - turnCornerClick.x, event.clientY - turnCornerClick.y) > 8) turnCornerDragged = true;
+});
+$('#bookShell').addEventListener('pointercancel', () => { turnCornerClick = null; });
+$('#bookShell').addEventListener('pointerup', () => {
+  if (READER_ENGINE !== 'turnjs') return;
+  clearTimeout(gutterRestoreTimer);
+  gutterRestoreTimer = setTimeout(() => {
+    const shell = $('#bookShell');
+    if (!shell.classList.contains('is-page-flipping')) { shell.classList.remove('is-page-dragging'); shell.classList.add('book-settled'); }
+  }, 900);
+});
+$('#bookShell').addEventListener('click', event => {
+  if (READER_ENGINE !== 'turnjs' || turnCornerDragged) { turnCornerDragged = false; return; }
+  turnCornerClick = null;
+  const page = event.target.closest('.flip-page') || [...els.book.querySelectorAll('.flip-page')].find(candidate => {
+    const bounds = candidate.getBoundingClientRect();
+    return event.clientX >= bounds.left && event.clientX <= bounds.right && event.clientY >= bounds.top && event.clientY <= bounds.bottom;
+  });
+  if (!page) return;
+  const rect = page.getBoundingClientRect();
+  const corner = Math.min(120, rect.width * .28, rect.height * .2);
+  const atTopOrBottom = event.clientY <= rect.top + corner || event.clientY >= rect.bottom - corner;
+  if (!atTopOrBottom) return;
+  if (event.clientX <= rect.left + corner) turnPage(-1);
+  else if (event.clientX >= rect.right - corner) turnPage(1);
+}, true);
 function canTurnPage(direction) {
   const issue = state.readerIssue;
   if (!issue) return false;
@@ -583,34 +736,40 @@ function canTurnPage(direction) {
 }
 
 function pageSnapshot(element) {
-  if (element instanceof HTMLCanvasElement) return element.toDataURL('image/jpeg', .9);
-  return element?.currentSrc || element?.src || '';
+  const surface = element instanceof HTMLCanvasElement || element instanceof HTMLImageElement ? element : element?.querySelector?.('img,canvas');
+  if (surface instanceof HTMLCanvasElement) return surface.toDataURL('image/jpeg', .9);
+  return surface?.currentSrc || surface?.src || '';
+}
+
+function getSpreadPageElement(index) {
+  return els.book.querySelectorAll('.stf__item')[index] || null;
 }
 
 function createTurningLeaf(direction) {
-  const source = direction > 0 ? els.book.lastElementChild : els.book.firstElementChild;
+  const collection = pageFlipInstance?.getPageCollection();
+  const current = collection?.getSpread()[collection.getCurrentSpreadIndex()] || [];
+  const target = collection?.getSpread()[collection.getCurrentSpreadIndex() + direction] || [];
+  const sourceIndex = direction > 0 ? current[current.length - 1] : current[0];
+  const targetIndex = target.find(index => Number.isInteger(readerLayout[index]));
+  const source = getSpreadPageElement(sourceIndex);
   if (!source) return null;
   const shellRect = $('#bookShell').getBoundingClientRect();
   const rect = source.getBoundingClientRect();
   const leaf = document.createElement('div');
   const underlay = document.createElement('div');
   underlay.className = 'turn-underlay';
-  Object.assign(underlay.style, {
-    left: `${rect.left - shellRect.left}px`, top: `${rect.top - shellRect.top}px`,
-    width: `${rect.width}px`, height: `${rect.height}px`
-  });
+  Object.assign(underlay.style, { left: `${rect.left - shellRect.left}px`, top: `${rect.top - shellRect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+  const underlaySrc = pageSnapshot(getSpreadPageElement(targetIndex));
+  if (underlaySrc) underlay.innerHTML = `<img src="${underlaySrc}" alt="">`;
   leaf.className = `turning-leaf ${direction > 0 ? 'turning-next' : 'turning-prev'}`;
-  Object.assign(leaf.style, {
-    left: `${rect.left - shellRect.left}px`, top: `${rect.top - shellRect.top}px`,
-    width: `${rect.width}px`, height: `${rect.height}px`, '--turn-angle': '0deg'
-  });
+  Object.assign(leaf.style, { left: `${rect.left - shellRect.left}px`, top: `${rect.top - shellRect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`, '--turn-angle': '0deg' });
   const snapshot = pageSnapshot(source);
+  if (!snapshot) return null;
   leaf.innerHTML = `<span class="leaf-face leaf-front"><img src="${snapshot}" alt=""></span><span class="leaf-face leaf-back"></span><i class="leaf-light"></i>`;
   $('#bookShell').append(underlay, leaf);
   source.classList.add('turn-source');
   return { leaf, underlay, source, width: rect.width };
 }
-
 function setTurnProgress(progress) {
   pageTurn.progress = Math.max(0, Math.min(1, progress));
   if (!pageTurn.leaf) return;
@@ -665,7 +824,8 @@ function finishPageTurn(complete) {
 }
 
 function requestPageTurn(direction) {
-  if (pageFlipInstance) return turnPage(direction);
+  if (READER_ENGINE === 'turnjs') return turnPage(direction);
+  if (pageFlipInstance && !USE_CUSTOM_PAGE_TURN) return turnPage(direction);
   if (pageTurn.active || pageTurn.animating || !canTurnPage(direction)) return;
   const visual = createTurningLeaf(direction);
   if (!visual) return turnPage(direction);
@@ -724,7 +884,7 @@ $('#bookShell').addEventListener('pointerdown', event => {
     event.preventDefault();
     return;
   }
-  if (pageFlipInstance) return;
+  if (READER_ENGINE === 'turnjs' || (pageFlipInstance && !USE_CUSTOM_PAGE_TURN)) return;
   if (event.button !== 0 || pageTurn.active || pageTurn.animating) return;
   const rect = $('#bookShell').getBoundingClientRect();
   const direction = event.clientX < rect.left + rect.width / 2 ? -1 : 1;
@@ -800,3 +960,11 @@ window.addEventListener('blur', () => {
 });
 function showToast(message){const toast=$('#toast');toast.textContent=message;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600);}
 loadIssues();
+
+
+
+
+
+
+
+
