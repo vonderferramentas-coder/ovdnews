@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap">
-  <link rel="stylesheet" href="styles.css?v=20260923-2">
+  <link rel="stylesheet" href="styles.css?v=20260923-4">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true"><defs><symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol><symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol><symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol><symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></symbol><symbol id="i-arrow-down-right" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7v10H7"/></symbol><symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol><symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol><symbol id="i-first" viewBox="0 0 24 24"><path d="m17 18-6-6 6-6M7 6v12"/></symbol><symbol id="i-last" viewBox="0 0 24 24"><path d="m7 18 6-6-6-6M17 6v12"/></symbol><symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol><symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol><symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></symbol><symbol id="i-library" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol></defs></svg>
@@ -41,14 +41,13 @@
       </div>
       <div class="archive-footer">
         <span id="carouselPosition">01 / 04</span>
-        <div class="year-picker" id="yearPicker"><button class="year-filter-button" id="yearFilter" type="button" aria-haspopup="listbox" aria-expanded="false"><span id="yearFilterLabel">Todos</span><span aria-hidden="true">⌄</span></button><div class="year-menu" id="yearMenu" role="listbox" aria-label="Filtrar edições por ano" hidden></div></div>
         <span>Arraste ou use as setas</span>
       </div>
     </section>
 
     <section class="all-issues" aria-labelledby="allTitle">
       <div class="section-heading compact">
-        <div><p class="kicker"><span></span> Biblioteca</p><h2 id="allTitle">Todas as edições</h2></div>
+        <div><p class="kicker"><span></span> Biblioteca</p><h2 class="year-picker title-picker" id="yearPicker"><button class="year-filter-button" id="yearFilter" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Filtrar edições por ano"><span id="allTitle">Todas as edições</span><span aria-hidden="true">⌄</span></button><div class="year-menu" id="yearMenu" role="listbox" aria-label="Filtrar edições por ano" hidden></div></h2></div>
         <button class="sort-button" id="sortButton" type="button">Mais recentes <svg class="icon" aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
       </div>
       <div class="issue-grid" id="issueGrid"></div>
@@ -136,17 +135,7 @@
   <div class="toast" id="toast" role="status"></div>
   <script src="vendor/jquery-3.7.1.min.js" defer></script>
   <script src="vendor/turn-3.min.js?v=20260922-3" defer></script>
-  <script src="vendor/page-flip.browser.js" defer></script>
   <script src="edicoes-data.js?v=20260916-1" defer></script>
-  <script src="app.js?v=20260923-2" defer></script>
+  <script src="app.js?v=20260923-4" defer></script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-

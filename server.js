@@ -11,7 +11,7 @@ const PORT = Number(process.env.PORT || 4173);
 fs.mkdirSync(COVER_CACHE_DIR, { recursive: true });
 
 const PUBLIC_FILES = new Set(['index.html', 'styles.css', 'app.js', 'edicoes.json', 'edicoes-data.js']);
-const PUBLIC_DIRS = new Set(['assets', 'vendor']);
+const PUBLIC_DIRS = new Set(['assets', 'vendor', 'dados']); // 'dados' = texto OCR usado pela busca
 function isPublicPath(relative) {
   if (!relative) return true;
   const first = relative.split(/[\\/]/)[0];

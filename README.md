@@ -50,7 +50,7 @@ Só isso já é suficiente: o servidor detecta a pasta, ordena as páginas pelo 
 }
 ```
 
-Os quatro `metadata.json` incluídos usam as imagens do acervo atual como demonstração. Ao copiar os arquivos WEBP reais para cada pasta, eles passam a ser priorizados automaticamente. Se houver uma pasta e um PDF com o mesmo número, o PDF será usado para evitar uma edição duplicada.
+O `metadata.json` incluído (`edicao-0142`) usa as imagens do acervo atual como demonstração. Ao copiar os arquivos WEBP reais para cada pasta, eles passam a ser priorizados automaticamente. Se houver uma pasta e um PDF com o mesmo número, o PDF será usado para evitar uma edição duplicada.
 
 ## Busca por conteúdo (OCR)
 
@@ -69,5 +69,6 @@ Limitação atual: só funciona para edições publicadas como PDF solto (Opçã
 
 - `/`: abre a busca.
 - `Esc`: fecha a busca ou o leitor.
-- `←` e `→`: navegam pelas páginas no leitor.
+- `←` e `→`: trocam de edição no carrossel ou de página no leitor.
+- `+`, `-` e `0`: zoom no leitor (aumentar, diminuir, restaurar).
 - Em telas touch, deslize lateralmente para virar a página.
