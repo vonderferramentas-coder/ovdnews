@@ -604,6 +604,18 @@ async function openReader(id, sourceImage = null) {
   if (issue.pdf) {
     showToast(`Abrindo ${issue.title}...`);
     try { await ensurePdfIssue(issue); } catch { showToast('Não foi possível abrir este PDF.'); return; }
+    // Pré-carrega todas as páginas antes de revelar o leitor — sem isso, ele abre já mostrando
+    // o placeholder "Página N" até a renderização em segundo plano alcançar aquela página,
+    // principalmente ao navegar rápido. Guarda a URL já resolvida (não a promise) num mapa à
+    // parte pra initTurnJs poder montar o book já com o conteúdo real, sem esperar de novo.
+    issue._readerPageUrlsReady ||= new Map();
+    await Promise.all(
+      Array.from({ length: issue.pageCount }, (_, index) => index + 1)
+        .filter(pageNumber => !(pageNumber === 1 && issue.cover))
+        .map(async pageNumber => {
+          try { issue._readerPageUrlsReady.set(pageNumber, await renderPdfPageUrl(issue, pageNumber)); } catch {}
+        })
+    );
   }
   const animated = sourceImage && document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches;
   const reveal = async () => {
@@ -803,7 +815,7 @@ async function initTurnJs(issue) {
   readerLayout = issue.pages.map((_, index) => index + 1);
   els.book.classList.add('turnjs-book');
   els.book.innerHTML = readerLayout.map(pageNumber => {
-    const initial = issue.pdf ? (pageNumber === 1 && issue.cover ? issue.cover : readerPagePlaceholder(pageNumber)) : issue.pages[pageNumber - 1];
+    const initial = issue.pdf ? (pageNumber === 1 && issue.cover ? issue.cover : (issue._readerPageUrlsReady?.get(pageNumber) || readerPagePlaceholder(pageNumber))) : issue.pages[pageNumber - 1];
     return `<div class="flip-page"><img data-reader-page="${pageNumber}" src="${initial}" alt="Página ${pageNumber} de ${issue.pageCount}"></div>`;
   }).join('');
   readerModoUnico = READER_SINGLE_PAGE.matches;
@@ -834,7 +846,7 @@ async function initPageFlip(issue) {
   readerLayout = [null, ...issue.pages.map((_, index) => index + 1), null];
   els.book.innerHTML = readerLayout.map(pageNumber => {
     if (!Number.isInteger(pageNumber)) return '<div class="flip-page flip-spacer" aria-hidden="true"></div>';
-    const initial = issue.pdf ? (pageNumber === 1 && issue.cover ? issue.cover : readerPagePlaceholder(pageNumber)) : issue.pages[pageNumber - 1];
+    const initial = issue.pdf ? (pageNumber === 1 && issue.cover ? issue.cover : (issue._readerPageUrlsReady?.get(pageNumber) || readerPagePlaceholder(pageNumber))) : issue.pages[pageNumber - 1];
     return `<div class="flip-page"><img data-reader-page="${pageNumber}" src="${initial}" alt="Página ${pageNumber} de ${issue.pageCount}"></div>`;
   }).join('');  pageFlipInstance = new St.PageFlip(els.book, {
     width: 540, height: 760, size: 'stretch',
@@ -1162,7 +1174,21 @@ function requestPageTurn(direction) {
 
 const carouselDrag = { active: false, moved: false, suppressClickUntil: 0, startX: 0, delta: 0, pointerId: null, lastStepAt: 0 };
 $('#prevIssue').addEventListener('click',()=>moveCover(-1)); $('#nextIssue').addEventListener('click',()=>moveCover(1));
-els.coverflow.addEventListener('click',event=>{if(performance.now()<carouselDrag.suppressClickUntil){event.preventDefault();return;}const card=event.target.closest('.cover-card');if(!card)return;const index=Number(card.dataset.index);if(index===state.active)openReader(state.filtered[index].id,card.querySelector('img'));else{state.active=index;renderCoverflow();observePdfCovers();}});
+els.coverflow.addEventListener('click',event=>{
+  if(performance.now()<carouselDrag.suppressClickUntil){event.preventDefault();return;}
+  // Não confia só no hit-test nativo do navegador (event.target): com transform-style:preserve-3d
+  // + rotateY, as capas das pontas (offset ±2) às vezes ficam com uma área clicável menor do que
+  // parecem visualmente, e o clique cai "no vazio". Em vez disso, olha o retângulo real de cada
+  // capa visível e escolhe a mais central entre as que contêm o ponto clicado — replica a mesma
+  // prioridade visual (capa do centro por cima) sem depender do hit-test 3D do navegador.
+  const cards=[...els.coverflow.querySelectorAll('.cover-card')].filter(el=>el.dataset.offset!=='far');
+  cards.sort((a,b)=>Math.abs(Number(a.dataset.offset))-Math.abs(Number(b.dataset.offset)));
+  const card=cards.find(el=>{const rect=el.getBoundingClientRect();return event.clientX>=rect.left&&event.clientX<=rect.right&&event.clientY>=rect.top&&event.clientY<=rect.bottom;});
+  if(!card)return;
+  const index=Number(card.dataset.index);
+  if(index===state.active)openReader(state.filtered[index].id,card.querySelector('img'));
+  else{state.active=index;renderCoverflow();observePdfCovers();}
+});
 els.issueGrid.addEventListener('click',event=>{const tile=event.target.closest('.issue-tile');if(tile)openReader(tile.dataset.id,tile.querySelector('img'));});
 $('#libraryPagination').addEventListener('click',event=>{const button=event.target.closest('[data-page]');if(!button||button.disabled)return;state.libraryPage=Number(button.dataset.page);renderGrid();requestAnimationFrame(observePdfCovers);document.querySelector('.all-issues').scrollIntoView({behavior:'smooth'});});
 $('#commandTrigger').addEventListener('click',openCommand); els.commandBackdrop.addEventListener('click',event=>{if(event.target===els.commandBackdrop)closeCommand();});
