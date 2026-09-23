@@ -496,3 +496,13 @@ button>.icon:only-child{display:block;margin:auto}
 /* Botao de ordenacao: liquid glass claro (teste), mesma receita do menu de ano */
 .sort-button{background:rgba(255,255,255,.55);border-color:rgba(255,255,255,.7);backdrop-filter:blur(22px) saturate(1.6);box-shadow:0 8px 28px rgba(20,20,20,.08),inset 0 1px rgba(255,255,255,.9),inset 0 0 0 1px var(--line);transition:.25s}
 .sort-button:hover{background:rgba(255,255,255,.8);transform:translateY(-1px);box-shadow:0 10px 30px rgba(20,20,20,.12),inset 0 1px rgba(255,255,255,.9),inset 0 0 0 1px var(--line)}
+/* Titulo-dropdown: texto alinhado a esquerda (junto ao kicker) e seta acompanhando a ultima linha do titulo */
+.title-picker{text-align:left}
+.title-picker .year-filter-button{display:inline;text-align:left}
+.title-picker .year-filter-button>span:last-child{display:inline-grid;vertical-align:middle;margin-left:12px}
+@media(max-width:580px){
+  .section-heading.compact{align-items:flex-end;gap:12px}
+  .section-heading.compact h2{font-size:28px}
+  .title-picker .year-filter-button>span:last-child{width:20px;height:20px;margin-left:6px}
+  .sort-button{white-space:nowrap;padding:0 14px;font-size:13px;flex-shrink:0}
+}
