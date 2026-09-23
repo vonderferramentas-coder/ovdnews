@@ -3,3 +3,6 @@ node_modules/
 Thumbs.db
 *.log
 .cache/
+dados/ocr/.estado.json
+.pnpm-store/
+__pycache__/

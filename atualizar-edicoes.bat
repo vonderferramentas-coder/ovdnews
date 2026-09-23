@@ -21,6 +21,7 @@ goto fim
 
 :executar
 %PYTHON_EXE% gerar-edicoes.py
+%PYTHON_EXE% gerar-ocr.py
 
 :fim
 pause

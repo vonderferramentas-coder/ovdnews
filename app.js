@@ -1,5 +1,10 @@
 const state = { issues: [], filtered: [], active: 0, sortDesc: true, readerIssue: null, page: 0, libraryPage: 1, query: '', year: 'all', zoom: 1 };
 const LIBRARY_PAGE_SIZE = 10;
+const COMPACT_PAGINATION = matchMedia('(max-width: 580px)');
+// No celular mostra 1 página por vez (tipo Kindle), em vez do spread de 2 do desktop — mantém a
+// virada do turn.js, só reduz o que é desenhado por vez, pra pesar menos no aparelho.
+const READER_SINGLE_PAGE = matchMedia('(max-width: 580px)');
+const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 let pdfModulePromise;
 let pdfCoverObserver;
 let pageFlipInstance = null;
@@ -9,6 +14,7 @@ let readerRenderToken = 0;
 let readerThumbsRendered = false;
 let readerFlipPending = false;
 let readerLayout = [];
+let readerModoUnico = false; // trava no valor de READER_SINGLE_PAGE no momento em que o leitor abre
 let bookSettleTimer = 0;
 const coverQueue = [];
 let runningCoverJobs = 0;
@@ -18,7 +24,8 @@ const $ = selector => document.querySelector(selector);
 const els = {
   coverflow: $('#coverflow'), issueGrid: $('#issueGrid'),
   carouselPosition: $('#carouselPosition'), commandBackdrop: $('#commandBackdrop'), searchInput: $('#searchInput'),
-  searchResults: $('#searchResults'), reader: $('#reader'), book: $('#book'), thumbnailRail: $('#thumbnailRail')
+  searchResults: $('#searchResults'), reader: $('#reader'), book: $('#book'), thumbnailRail: $('#thumbnailRail'),
+  readerSearchBackdrop: $('#readerSearchBackdrop')
 };
 
 const formatDate = value => {
@@ -254,6 +261,7 @@ async function loadIssues() {
     }).join('');
     $('#scanStatus').textContent = `${state.issues.length} edições sincronizadas`;
     render();
+    precarregarOcr();
   } catch (error) {
     $('#emptyState').hidden = false;
     $('#emptyState').textContent = 'Não foi possível carregar o acervo.';
@@ -285,10 +293,35 @@ function renderCoverflow() {
   renderCoverMeta();
 }
 
+// Com uma busca confirmada, o heading ganha uma linha "Resultados de busca por: X" acima do
+// título da edição ativa, que vira h2 (era h1) pra manter só um h1 na hierarquia da página.
+// Só reconstrói o DOM quando esse modo muda (não a cada troca de capa), pra não perder foco
+// nem disparar o aria-live à toa.
 function renderCoverMeta() {
   const issues = state.filtered;
   if (!issues.length) return;
   const active = issues[state.active];
+  const termo = state.query.trim();
+  const heading = $('.archive-heading');
+  if (heading.classList.contains('is-searching') !== Boolean(termo)) {
+    heading.classList.toggle('is-searching', Boolean(termo));
+    heading.innerHTML = '';
+    const eyebrow = document.createElement('p');
+    eyebrow.textContent = 'Acervo digital OVD News';
+    heading.appendChild(eyebrow);
+    if (termo) {
+      const resultsHeading = document.createElement('h1');
+      resultsHeading.id = 'searchResultsHeading';
+      heading.appendChild(resultsHeading);
+    }
+    const titleEl = document.createElement(termo ? 'h2' : 'h1');
+    titleEl.id = 'archiveTitle';
+    heading.appendChild(titleEl);
+    const dateEl = document.createElement('span');
+    dateEl.id = 'archiveDate';
+    heading.appendChild(dateEl);
+  }
+  if (termo) $('#searchResultsHeading').textContent = `Resultados de busca por: "${termo}"`;
   $('#archiveTitle').textContent = active.title;
   $('#archiveDate').textContent = [formatDate(active.date), active.category].filter(Boolean).join(' · ');
   els.carouselPosition.textContent = `${String(state.active+1).padStart(2,'0')} / ${String(issues.length).padStart(2,'0')}`;
@@ -319,9 +352,11 @@ function renderPagination(totalPages) {
   pagination.hidden = totalPages <= 1;
   if (pagination.hidden) return;
   const current = state.libraryPage;
-  const pages = totalPages <= 7 ? Array.from({length:totalPages},(_,index)=>index+1) : current <= 4 ? [1,2,3,4,5,'…',totalPages] : current >= totalPages-3 ? [1,'…',totalPages-4,totalPages-3,totalPages-2,totalPages-1,totalPages] : [1,'…',current-1,current,current+1,'…',totalPages];
-  pagination.innerHTML = `<button data-page="${current-1}" aria-label="Página anterior" ${current===1?'disabled':''}>‹</button>${pages.map(page=>page==='…'?'<span aria-hidden="true">…</span>':`<button data-page="${page}" ${page===current?'aria-current="page"':''} aria-label="Página ${page}">${page}</button>`).join('')}<button data-page="${current+1}" aria-label="Próxima página" ${current===totalPages?'disabled':''}>›</button>`;
+  // No celular cabem no máximo 7 botões de 44px: anterior, 5 posições e próxima.
+  const pages = COMPACT_PAGINATION.matches ? (totalPages <= 5 ? Array.from({length:totalPages},(_,index)=>index+1) : current <= 2 ? [1,2,3,'…',totalPages] : current >= totalPages-1 ? [1,'…',totalPages-2,totalPages-1,totalPages] : [1,'…',current,'…',totalPages]) : totalPages <= 7 ? Array.from({length:totalPages},(_,index)=>index+1) : current <= 4 ? [1,2,3,4,5,'…',totalPages] : current >= totalPages-3 ? [1,'…',totalPages-4,totalPages-3,totalPages-2,totalPages-1,totalPages] : [1,'…',current-1,current,current+1,'…',totalPages];
+  pagination.innerHTML = `<button data-page="${current-1}" aria-label="Página anterior" ${current===1?'disabled':''}>${icon('chevron-left')}</button>${pages.map(page=>page==='…'?'<span aria-hidden="true">…</span>':`<button data-page="${page}" ${page===current?'aria-current="page"':''} aria-label="Página ${page}">${page}</button>`).join('')}<button data-page="${current+1}" aria-label="Próxima página" ${current===totalPages?'disabled':''}>${icon('chevron-right')}</button>`;
 }
+COMPACT_PAGINATION.addEventListener('change', () => renderPagination(Math.max(1, Math.ceil(state.filtered.length / LIBRARY_PAGE_SIZE))));
 
 function moveCover(direction) {
   const length = state.filtered.length;
@@ -331,31 +366,236 @@ function moveCover(direction) {
   observePdfCovers();
 }
 
-function applyFilters() {
+function metadadosTexto(issue) {
+  return normalize([issue.title, issue.number, issue.date, issue.year, issue.category, issue.description, ...issue.tags].join(' '));
+}
+
+// ---------- busca no texto das páginas (OCR) ----------
+// paginasOcr[id] = [{ numero, texto, offsets: [{inicio,fim,palavra}] }, ...], preenchido sob demanda.
+const paginasOcr = {};
+const ocrCarregando = {};
+
+function carregarScript(caminho) {
+  return new Promise(resolver => {
+    const script = document.createElement('script');
+    script.src = caminho;
+    script.onload = () => resolver(true);
+    script.onerror = () => resolver(false); // edição ainda sem OCR: ignora, não é erro
+    document.head.appendChild(script);
+  });
+}
+
+function indexarOcr(id, paginas) {
+  paginasOcr[id] = (paginas || []).map(pagina => {
+    let texto = '';
+    const offsets = [];
+    (pagina.palavras || []).forEach(palavra => {
+      if (texto) texto += ' ';
+      offsets.push({ inicio: texto.length, fim: texto.length + palavra.t.length, palavra });
+      texto += palavra.t;
+    });
+    return { numero: pagina.numero, texto, offsets };
+  });
+}
+
+function carregarOcrEdicao(issue) {
+  if (paginasOcr[issue.id] || ocrCarregando[issue.id]) return ocrCarregando[issue.id] || Promise.resolve();
+  ocrCarregando[issue.id] = carregarScript(`dados/ocr/edicao-${issue.id}.js`).then(carregado => {
+    const dados = carregado && window.ACERVO_OCR && window.ACERVO_OCR[issue.id];
+    if (dados) indexarOcr(issue.id, dados.paginas);
+  });
+  return ocrCarregando[issue.id];
+}
+
+// Carrega o texto de todas as edições sozinho, em segundo plano, assim que o navegador estiver
+// ocioso — pra busca já responder na hora quando a pessoa digitar, sem esperar o primeiro clique.
+function precarregarOcr() {
+  const iniciar = () => state.issues.forEach(issue => carregarOcrEdicao(issue));
+  if ('requestIdleCallback' in window) requestIdleCallback(iniciar, { timeout: 4000 });
+  else setTimeout(iniciar, 800);
+}
+
+// Monta o resultado de uma página pro termo buscado — a posição do trecho com <mark> em volta
+// do termo, e as palavras daquele trecho (pra desenhar o destaque no leitor) — ou null se a
+// página não contém o termo.
+function construirAchadoPagina(pagina, termoNormalizado) {
+  const textoNormalizado = normalize(pagina.texto);
+  const pos = textoNormalizado.indexOf(termoNormalizado);
+  if (pos === -1) return null;
+  const fim = pos + termoNormalizado.length;
+  const palavras = pagina.offsets.filter(o => o.inicio < fim && o.fim > pos).map(o => o.palavra);
+
+  const inicioTrecho = Math.max(0, pos - 40);
+  const fimTrecho = Math.min(pagina.texto.length, fim + 60);
+  const trecho = (inicioTrecho > 0 ? '…' : '') +
+    pagina.texto.slice(inicioTrecho, fimTrecho).replace(/\s+/g, ' ') +
+    (fimTrecho < pagina.texto.length ? '…' : '');
+  const seguro = document.createElement('div');
+  seguro.textContent = trecho;
+  const padrao = new RegExp(termoNormalizado.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+  const trechoHtml = seguro.innerHTML.replace(padrao, correspondencia => `<mark>${correspondencia}</mark>`);
+
+  return { pagina: pagina.numero, trechoHtml, palavras };
+}
+
+// Acha a primeira página cujo texto contém o termo buscado (usado pela busca geral do acervo,
+// que só precisa abrir na primeira ocorrência).
+function localizarNoOcr(id, termoNormalizado) {
+  const paginas = paginasOcr[id];
+  if (!paginas || !termoNormalizado) return null;
+  for (const pagina of paginas) {
+    const achado = construirAchadoPagina(pagina, termoNormalizado);
+    if (achado) return achado;
+  }
+  return null;
+}
+
+// Acha TODAS as páginas cujo texto contém o termo (usado pela busca interna da edição aberta,
+// que precisa listar e navegar entre todas as ocorrências).
+function localizarTodosNoOcr(id, termoNormalizado) {
+  const paginas = paginasOcr[id];
+  if (!paginas || !termoNormalizado) return [];
+  return paginas.map(pagina => construirAchadoPagina(pagina, termoNormalizado)).filter(Boolean);
+}
+
+function candidatosBusca(termoNormalizado) {
+  return state.filtered.map(issue => {
+    const matchMetadados = metadadosTexto(issue).includes(termoNormalizado);
+    const paginas = paginasOcr[issue.id] || [];
+    const paginasComMatch = paginas.filter(pagina => normalize(pagina.texto).includes(termoNormalizado)).length;
+    if (!matchMetadados && !paginasComMatch) return null;
+    const achado = paginasComMatch ? localizarNoOcr(issue.id, termoNormalizado) : null;
+    const pontuacao = (matchMetadados ? 100 : 0) + Math.min(paginasComMatch, 5) * 5;
+    return { issue, achado, pontuacao };
+  }).filter(Boolean).sort((a, b) => b.pontuacao - a.pontuacao);
+}
+
+// confirmar=false adia a atualização do carrossel coverflow-wrap (só mexe em grade + dropdown
+// de resultados) — usado enquanto a pessoa ainda está digitando, pra não ficar pulando de capa
+// em capa a cada tecla. O carrossel só sincroniza quando a busca é confirmada (ver closeCommand).
+function applyFilters(confirmar = true) {
   const needle = normalize(state.query.trim());
-  state.filtered = state.issues.filter(issue => (state.year === 'all' || String(issue.year) === state.year) && normalize([issue.title,issue.number,issue.date,issue.year,issue.category,issue.description,...issue.tags].join(' ')).includes(needle));
+  state.filtered = state.issues.filter(issue => {
+    if (state.year !== 'all' && String(issue.year) !== state.year) return false;
+    if (!needle) return true;
+    if (metadadosTexto(issue).includes(needle)) return true;
+    const paginas = paginasOcr[issue.id];
+    return paginas ? paginas.some(pagina => normalize(pagina.texto).includes(needle)) : false;
+  });
   if (!state.sortDesc) state.filtered.reverse();
   state.active = 0;
   state.libraryPage = 1;
   $('#allTitle').textContent = state.year === 'all' ? 'Todas as edições' : `Edições de ${state.year}`;
   $('#yearFilterLabel').textContent = state.year === 'all' ? 'Todos' : state.year;
   $('#yearMenu').querySelectorAll('[data-year]').forEach(option => option.setAttribute('aria-selected', option.dataset.year === state.year));
-  render(); renderSearchResults();
+  renderGrid(); requestAnimationFrame(observePdfCovers);
+  if (confirmar) renderCoverflow();
+  renderSearchResults();
 }
 
-function applySearch(query) { state.query = query; applyFilters(); }
+function applySearch(query) {
+  state.query = query;
+  const termo = normalize(query.trim());
+  if (termo) Promise.all(state.issues.map(carregarOcrEdicao)).then(() => { if (normalize(state.query.trim()) === termo) applyFilters(false); });
+  applyFilters(false);
+}
+
+let destaqueTimer = 0;
+function destacarPalavras(palavras) {
+  const pagina = els.book.querySelector(`.p${state.page + 1}`);
+  if (!pagina) return;
+  pagina.querySelectorAll('.ocr-destaque').forEach(el => el.remove());
+  palavras.forEach(palavra => {
+    const marca = document.createElement('div');
+    marca.className = 'ocr-destaque';
+    marca.style.left = `${palavra.x * 100}%`; marca.style.top = `${palavra.y * 100}%`;
+    marca.style.width = `${palavra.w * 100}%`; marca.style.height = `${palavra.h * 100}%`;
+    pagina.appendChild(marca);
+  });
+  clearTimeout(destaqueTimer);
+  destaqueTimer = setTimeout(() => pagina.querySelectorAll('.ocr-destaque').forEach(el => el.classList.add('sumindo')), 2400);
+}
 
 function renderSearchResults() {
-  const results = state.query ? state.filtered.slice(0,6) : [];
-  els.searchResults.innerHTML = results.length ? `<p class="command-label">Resultados</p>${results.map(issue => `<button class="result-item" data-id="${issue.id}"><img src="${issue.cover || placeholderCover(issue)}" data-cover-id="${issue.id}" alt=""><span><strong>${issue.title}</strong><small>${[formatDate(issue.date),issue.category].filter(Boolean).join(' · ')}</small></span><kbd>↵</kbd></button>`).join('')}` : state.query ? '<p class="command-label">Nenhum resultado encontrado</p>' : '';
+  if (!state.query) { els.searchResults.innerHTML = ''; return; }
+  const termo = normalize(state.query.trim());
+  const candidatos = candidatosBusca(termo).slice(0, 6);
+  els.searchResults.innerHTML = candidatos.length ? `<p class="command-label">Resultados</p>${candidatos.map(({ issue, achado }) => `<button class="result-item" data-id="${issue.id}"><img src="${issue.cover || placeholderCover(issue)}" data-cover-id="${issue.id}" alt=""><span><strong>${issue.title}</strong><small>${[formatDate(issue.date), issue.category, achado ? `encontrado na página ${achado.pagina}` : ''].filter(Boolean).join(' · ')}</small>${achado ? `<small class="trecho">${achado.trechoHtml}</small>` : ''}</span></button>`).join('')}` : '<p class="command-label">Nenhum resultado encontrado</p>';
 }
 
-function openCommand() { els.commandBackdrop.hidden = false; $('#commandTrigger').setAttribute('aria-expanded','true'); setTimeout(()=>els.searchInput.focus(),40); }
-function closeCommand() { els.commandBackdrop.hidden = true; $('#commandTrigger').setAttribute('aria-expanded','false'); }
+// Busca interna da edição aberta: mesma cara da busca do acervo (mesmas classes .command-*
+// e .result-item), mas os resultados são páginas da edição atual, não outras edições.
+function renderReaderSearchResults() {
+  const issue = state.readerIssue;
+  const termo = normalize($('#readerSearchInput').value.trim());
+  const resultados = (termo && issue) ? localizarTodosNoOcr(issue.id, termo) : [];
+  $('#readerSearchCount').textContent = termo ? `${resultados.length} resultado${resultados.length === 1 ? '' : 's'}` : '';
+  $('#readerSearchResults').innerHTML = !termo ? '' : (resultados.length
+    ? `<p class="command-label">Resultados</p>${resultados.map(r => `<button class="result-item" data-page="${r.pagina}" data-palavras='${JSON.stringify(r.palavras).replace(/'/g, '&#39;')}'><span class="command-icon">${r.pagina}</span><span><strong>Página ${r.pagina}</strong><small class="trecho">${r.trechoHtml}</small></span></button>`).join('')}`
+    : '<p class="command-label">Nenhum resultado encontrado</p>');
+}
+
+let readerSearchReturnFocus = null;
+function openReaderSearch() {
+  if (!state.readerIssue) return;
+  readerSearchReturnFocus = document.activeElement;
+  els.readerSearchBackdrop.hidden = false;
+  $('#readerSearchTrigger').setAttribute('aria-expanded', 'true');
+  carregarOcrEdicao(state.readerIssue).then(renderReaderSearchResults);
+  setTimeout(() => $('#readerSearchInput').focus(), 40);
+}
+function closeReaderSearch({ returnFocus = true } = {}) {
+  const wasOpen = !els.readerSearchBackdrop.hidden;
+  els.readerSearchBackdrop.hidden = true;
+  $('#readerSearchTrigger').setAttribute('aria-expanded', 'false');
+  if (wasOpen && returnFocus) restoreFocus(readerSearchReturnFocus);
+}
+function irParaResultadoBusca(pagina, palavras) {
+  if (!state.readerIssue) return;
+  cancelPageTurn();
+  state.page = Math.max(0, Math.min(state.readerIssue.pageCount - 1, pagina - 1));
+  renderPages();
+  closeReaderSearch({ returnFocus: false });
+  if (palavras && palavras.length) destacarPalavras(palavras);
+}
+
+let commandReturnFocus = null, readerReturnFocus = null;
+function restoreFocus(element) { if (element?.isConnected) element.focus({ preventScroll: true }); }
+function trapFocus(event, container) {
+  const items = [...container.querySelectorAll('button,input,[href],[tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled && el.getClientRects().length);
+  if (!items.length) return;
+  const first = items[0], last = items[items.length - 1], inside = container.contains(document.activeElement);
+  if (event.shiftKey && (!inside || document.activeElement === first)) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && (!inside || document.activeElement === last)) { event.preventDefault(); first.focus(); }
+}
+function openCommand() { if (els.commandBackdrop.hidden) commandReturnFocus = document.activeElement; els.commandBackdrop.hidden = false; $('#commandTrigger').setAttribute('aria-expanded','true'); setTimeout(()=>els.searchInput.focus(),40); }
+// resetQuery=false preserva a pesquisa (usado ao CONFIRMAR: Enter ou clicar na lupa, que deixam
+// o carrossel refletindo o resultado). Cancelar a busca (Esc, clicar fora) usa o padrão (true) e
+// descarta tudo, voltando pro estado sem pesquisa — carrossel, grade e dropdown revertem pra
+// "todas as edições" e o campo limpa, pra reabrir a busca nunca mostrar a palavra anterior.
+function closeCommand({ returnFocus = true, resetQuery = true } = {}) {
+  const wasOpen = !els.commandBackdrop.hidden;
+  els.commandBackdrop.hidden = true;
+  $('#commandTrigger').setAttribute('aria-expanded','false');
+  if (wasOpen && resetQuery) {
+    els.searchInput.value = '';
+    state.query = '';
+    applyFilters();
+  }
+  if (wasOpen && returnFocus) restoreFocus(commandReturnFocus);
+}
+// Confirmar a busca (Enter ou clicar na lupa): só reflete os resultados no carrossel da home e
+// fecha a busca — nunca abre uma edição direto. Abrir uma edição é só clicando num result-item.
+function confirmarBuscaHome() {
+  renderCoverflow();
+  requestAnimationFrame(observePdfCovers);
+  closeCommand({ resetQuery: false });
+}
 
 async function openReader(id, sourceImage = null) {
   const issue = state.issues.find(item => item.id === String(id));
   if (!issue) return;
+  readerReturnFocus = els.commandBackdrop.hidden ? document.activeElement : commandReturnFocus;
   if (FILE_MODE && issue.pdf) {
     window.open(issue.pdf, '_blank', 'noopener');
     closeCommand();
@@ -367,14 +607,16 @@ async function openReader(id, sourceImage = null) {
   }
   const animated = sourceImage && document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches;
   const reveal = async () => {
-    state.readerIssue = issue; state.page = 0; state.zoom = 1; readerThumbsRendered = false;
+    state.readerIssue = issue;
+    state.page = 0;
+    state.zoom = 1; readerThumbsRendered = false;
     els.reader.classList.toggle('is-opening', Boolean(animated));
     els.reader.hidden = false; document.body.style.overflow = 'hidden';
     $('#readerTitle').textContent = issue.title; $('#readerDate').textContent = formatDate(issue.date);
     els.thumbnailRail.innerHTML = issue.pdf
       ? issue.pages.map((page,index)=>`<button data-page="${index}" aria-label="Ir para página ${index+1}"><canvas data-thumb-page="${page}" aria-label="Página ${index+1}"></canvas></button>`).join('')
       : issue.pages.map((page,index)=>`<button data-page="${index}" aria-label="Ir para página ${index+1}"><img src="${page}" alt="Página ${index+1}" loading="lazy"></button>`).join('');
-    applyZoom(); await initPageFlip(issue); closeCommand();
+    applyZoom(); closeCommand({ returnFocus: false }); $('#closeReader').focus({ preventScroll: true }); await initPageFlip(issue);
   };
   if (!animated) return reveal();
   // Mantém a abertura suave, sem compartilhar a imagem da capa com o livro.
@@ -402,9 +644,9 @@ function resetPageFlip() {
   els.book.replaceWith(mount);
   els.book = mount;
 }
-function closeReader() { cancelPageTurn(); resetPageFlip(); readerFlipPending = false; els.reader.classList.remove('is-opening'); els.reader.hidden = true; document.body.style.overflow = ''; state.readerIssue = null; state.zoom = 1; }
+function closeReader() { cancelPageTurn(); resetPageFlip(); readerFlipPending = false; els.reader.classList.remove('is-opening'); els.reader.hidden = true; document.body.style.overflow = ''; state.readerIssue = null; state.zoom = 1; closeReaderSearch({ returnFocus: false }); $('#readerSearchInput').value = ''; $('#readerSearchResults').innerHTML = ''; $('#readerSearchCount').textContent = ''; restoreFocus(readerReturnFocus); }
 
-function getSpreadStart(page) { if (page === 0) return 0; return page % 2 === 0 ? page - 1 : page; }
+function getSpreadStart(page) { if (readerModoUnico) return page; if (page === 0) return 0; return page % 2 === 0 ? page - 1 : page; }
 
 function readerPagePlaceholder(pageNumber) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 840"><rect width="600" height="840" fill="#f5f2ea"/><path d="M0 0h600v840H0z" fill="url(#p)" opacity=".18"/><defs><pattern id="p" width="7" height="7" patternUnits="userSpaceOnUse"><path d="M0 0v7" stroke="#9e9a91" stroke-width="1"/></pattern></defs><text x="300" y="420" text-anchor="middle" fill="#9d9990" font-family="Segoe UI,sans-serif" font-size="18">Página ${pageNumber}</text></svg>`;
@@ -465,6 +707,58 @@ async function hydrateReaderPages(issue, token) {
   }
 }
 
+// Encosta as setas nas bordas reais da(s) página(s) visível(is) — uma só no modo 1 página
+// (celular) ou na capa/contracapa do modo 2 páginas (desktop); duas no miolo do desktop.
+// No modo desktop não mede as páginas em si: durante a virada elas usam transforms 3D
+// (perspective/rotateY) que distorcem o retângulo lido via getBoundingClientRect, então a seta
+// acabava caindo perto da lombada, no centro. Em vez disso usa a mesma regra de geometria do
+// --turnjs-offset (abaixo): o #book sempre ocupa a largura cheia do book-shell; com 1 página só,
+// ela fica recentralizada nos 50% do meio dessa largura. No modo 1 página não existe esse truque
+// de deslocamento, então mede o #book direto — ele já tem a largura exata da página visível.
+// Em ambos os casos, dividir por state.zoom devolve a posição "natural" (100%), então as setas
+// não se movem quando o usuário aplica zoom manual, só quando a página muda.
+function positionPageArrows() {
+  if (READER_ENGINE !== 'turnjs' || !turnBookInstance || !state.readerIssue) return;
+  const view = turnBookInstance.turn('view') || [];
+  if (!view.some(Number.isInteger)) return;
+  const prevPageEl = $('#prevPage'), nextPageEl = $('#nextPage');
+  // Com zoom aplicado, a página ampliada pode cobrir a posição "natural" das setas.
+  // Nesse caso solta o posicionamento inline e deixa as setas nas bordas da tela
+  // (margem definida em CSS), voltando à posição encostada na página quando o zoom
+  // retorna a 100%.
+  if ((state.zoom || 1) > 1.01) {
+    prevPageEl.style.removeProperty('left');
+    nextPageEl.style.removeProperty('right');
+    return;
+  }
+  const stageRect = $('#readerStage').getBoundingClientRect();
+  const zoom = state.zoom || 1;
+  let naturalLeft, naturalRight;
+  if (readerModoUnico) {
+    // Modo 1 página: sem o truque de deslocamento, o próprio #book já tem a largura exata da
+    // página visível (centralizada pelo flex do .reader-scroll), então mede ele direto. Ainda
+    // assim precisa decompor a partir do canto do book-shell (que não se move com o zoom) pra
+    // não deslocar as setas quando o usuário aplica zoom manual.
+    const shellRect = $('#bookShell').getBoundingClientRect();
+    const bookRect = els.book.getBoundingClientRect();
+    const shellLeft = shellRect.left - stageRect.left;
+    naturalLeft = shellLeft + (bookRect.left - shellRect.left) / zoom;
+    naturalRight = naturalLeft + bookRect.width / zoom;
+  } else {
+    const shellRect = $('#bookShell').getBoundingClientRect();
+    const single = !view[0] || !view[1];
+    const shellLeft = shellRect.left - stageRect.left;
+    const shellWidth = shellRect.width / zoom;
+    naturalLeft = shellLeft + (single ? shellWidth * .25 : 0);
+    naturalRight = shellLeft + (single ? shellWidth * .75 : shellWidth);
+  }
+  const gap = 18;
+  const prevPage = $('#prevPage'), nextPage = $('#nextPage');
+  const prevWidth = prevPage.getBoundingClientRect().width || 46;
+  const nextWidth = nextPage.getBoundingClientRect().width || 46;
+  prevPage.style.left = `${Math.max(8, naturalLeft - gap - prevWidth)}px`;
+  nextPage.style.right = `${Math.max(8, stageRect.width - naturalRight - gap - nextWidth)}px`;
+}
 function syncTurnJsControls() {
   const issue = state.readerIssue;
   if (!issue || !turnBookInstance) return;
@@ -475,8 +769,14 @@ function syncTurnJsControls() {
   const end = Math.max(...visible) + 1;
   state.page = start;
   els.book.style.removeProperty('--book-offset');
-  const turnSize = turnBookInstance.turn('size');
-  els.book.style.setProperty('--turnjs-offset', !turnView[0] ? `${-Math.round(turnSize.width / 4)}px` : !turnView[1] ? `${Math.round(turnSize.width / 4)}px` : '0px');
+  // No modo 1 página (celular) nunca precisa desse deslocamento de recentralização — só existe
+  // pra centralizar uma página sozinha dentro do espaço largo de 2 páginas do modo desktop.
+  if (readerModoUnico) {
+    els.book.style.removeProperty('--turnjs-offset');
+  } else {
+    const turnSize = turnBookInstance.turn('size');
+    els.book.style.setProperty('--turnjs-offset', !turnView[0] ? `${-Math.round(turnSize.width / 4)}px` : !turnView[1] ? `${Math.round(turnSize.width / 4)}px` : '0px');
+  }
   $('#bookShell').classList.toggle('book-opened', visible.length > 1);
   $('#pageIndicator').textContent = start === 0 ? `Capa · 1 de ${issue.pageCount}` : `Páginas ${start + 1}${end > start + 1 ? `–${end}` : ''} de ${issue.pageCount}`;
   $('#readerProgress').style.width = `${Math.min(100, (end / issue.pageCount) * 100)}%`;
@@ -485,14 +785,15 @@ function syncTurnJsControls() {
   $('#readerFirst').disabled = start === 0;
   $('#readerLast').disabled = end >= issue.pageCount;
   els.thumbnailRail.querySelectorAll('button').forEach((button, index) => button.classList.toggle('active', index >= start && index < end));
+  positionPageArrows();
 }
 
-function getTurnJsSize() {
+function getTurnJsSize(paginasVisiveis = 2) {
   const shell = $('#bookShell').getBoundingClientRect();
   const aspect = 540 / 760;
   let height = Math.max(352, Math.min(858, Math.floor(shell.height)));
   let width = Math.round(height * aspect);
-  if (width * 2 > shell.width) { width = Math.floor(shell.width / 2); height = Math.round(width / aspect); }
+  if (width * paginasVisiveis > shell.width) { width = Math.floor(shell.width / paginasVisiveis); height = Math.round(width / aspect); }
   return { width, height };
 }
 
@@ -505,9 +806,10 @@ async function initTurnJs(issue) {
     const initial = issue.pdf ? (pageNumber === 1 && issue.cover ? issue.cover : readerPagePlaceholder(pageNumber)) : issue.pages[pageNumber - 1];
     return `<div class="flip-page"><img data-reader-page="${pageNumber}" src="${initial}" alt="Página ${pageNumber} de ${issue.pageCount}"></div>`;
   }).join('');
-  const size = getTurnJsSize();
+  readerModoUnico = READER_SINGLE_PAGE.matches;
+  const size = getTurnJsSize(readerModoUnico ? 1 : 2);
   const $book = window.jQuery(els.book);
-  $book.turn({ width: size.width * 2, height: size.height, display: 'double', autoCenter: true, duration: 720, gradients: true, acceleration: true, elevation: 40, corners: 'all', cornerSize: 160, page: 1 });
+  $book.turn({ width: readerModoUnico ? size.width : size.width * 2, height: size.height, display: readerModoUnico ? 'single' : 'double', autoCenter: true, duration: 720, gradients: true, acceleration: true, elevation: 40, corners: 'all', cornerSize: 160, page: (state.page || 0) + 1 });
   turnBookInstance = $book;
     $book.on('turning', () => { clearTimeout(bookSettleTimer); const shell = $('#bookShell'); shell.classList.add('is-page-flipping'); shell.classList.remove('book-settled'); });
   $book.on('turned', () => { readerFlipPending = false; clearTimeout(gutterRestoreTimer); const shell = $('#bookShell'); shell.classList.remove('is-page-flipping'); shell.classList.remove('is-page-dragging'); syncTurnJsControls(); clearTimeout(bookSettleTimer); bookSettleTimer = setTimeout(() => shell.classList.add('book-settled'), 80); });  readerFlipPending = false;
@@ -603,17 +905,27 @@ async function turnPage(direction) {
   direction > 0 ? pageFlipInstance.flipNext('bottom') : pageFlipInstance.flipPrev('bottom');
 }
 function applyZoom(center = true) {
-  state.zoom = Math.max(.75, Math.min(2.5, state.zoom));
+  state.zoom = Math.max(1, Math.min(2.5, state.zoom));
   $('#zoomLevel').textContent = `${Math.round(state.zoom * 100)}%`;
   $('#bookShell').style.setProperty('--reader-zoom', state.zoom);
   const zoomed = state.zoom > 1.01;
-  $('#readerStage').classList.toggle('zoomed', zoomed);
+  $('#readerScroll').classList.toggle('zoomed', zoomed);
+  if (zoomed) {
+    // Sem zoom, as setas só precisam da margem fixa do CSS — não depende de medir
+    // a página, então já pode aplicar na hora.
+    positionPageArrows();
+  } else {
+    // Voltando ao zoom original: a posição "encostada" na página só pode ser medida
+    // com o book-shell já assentado na escala 1, senão pega a geometria no meio da
+    // transição e a seta trava numa posição errada. Espera o transform terminar.
+    $('#bookShell').addEventListener('transitionend', positionPageArrows, { once: true });
+  }
   if (!zoomed) {
-    $('#readerStage').scrollTo({ left: 0, top: 0 });
+    $('#readerScroll').scrollTo({ left: 0, top: 0 });
     return;
   }
   if (center) requestAnimationFrame(() => {
-    const stage = $('#readerStage');
+    const stage = $('#readerScroll');
     stage.scrollLeft = Math.max(0, (stage.scrollWidth - stage.clientWidth) / 2);
     stage.scrollTop = Math.max(0, (stage.scrollHeight - stage.clientHeight) / 2);
   });
@@ -629,17 +941,30 @@ function adjustZoom(delta, button) {
 
 function zoomAtPointer(delta, event) {
   const previous = state.zoom;
-  state.zoom += delta;
-  state.zoom = Math.max(.75, Math.min(2.5, state.zoom));
-  if (state.zoom === previous) return;
-  const stage = $('#readerStage'), rect = stage.getBoundingClientRect();
-  const pointX = event.clientX - rect.left + stage.scrollLeft, pointY = event.clientY - rect.top + stage.scrollTop;
+  const next = Math.max(1, Math.min(2.5, previous + delta));
+  if (next === previous) return;
+  const stage = $('#readerScroll'), shell = $('#bookShell');
+  const stageRect = stage.getBoundingClientRect();
+  const shellRect = shell.getBoundingClientRect();
+  // Âncora do book-shell em coordenadas de conteúdo: como o transform-origin é
+  // top-left, o canto do shell nunca se move com o zoom, só o conteúdo cresce a
+  // partir dele — por isso essa posição serve de referência estável entre escalas.
+  const anchorX = shellRect.left - stageRect.left + stage.scrollLeft;
+  const anchorY = shellRect.top - stageRect.top + stage.scrollTop;
+  // Ponto sob o cursor, em coordenadas locais do shell na escala 1 (descontando o
+  // zoom atual), pra poder recolocar esse mesmo ponto sob o cursor na escala nova.
+  const localX = (event.clientX - shellRect.left) / previous;
+  const localY = (event.clientY - shellRect.top) / previous;
+  state.zoom = next;
   applyZoom(false);
-  requestAnimationFrame(() => {
-    const ratio = state.zoom / previous;
-    stage.scrollLeft = Math.max(0, pointX * ratio - (event.clientX - rect.left));
-    stage.scrollTop = Math.max(0, pointY * ratio - (event.clientY - rect.top));
-  });
+  // A escala precisa ficar sem transição durante o wheel-zoom (ver .is-wheel-zoom)
+  // pra isso funcionar: só assim o scrollWidth já reflete o tamanho novo aqui,
+  // sem o navegador limitar (clampar) o scroll a um valor ainda "no meio" da
+  // animação e a mira acabar saindo do lugar.
+  const targetX = anchorX + localX * next;
+  const targetY = anchorY + localY * next;
+  stage.scrollLeft = Math.max(0, targetX - (event.clientX - stageRect.left));
+  stage.scrollTop = Math.max(0, targetY - (event.clientY - stageRect.top));
 }
 const zoomPan = { active: false, pointerId: null, startX: 0, startY: 0, scrollLeft: 0, scrollTop: 0 };
 
@@ -732,7 +1057,8 @@ function canTurnPage(direction) {
   const issue = state.readerIssue;
   if (!issue) return false;
   const start = getSpreadStart(state.page);
-  return direction < 0 ? start > 0 : start + (start === 0 ? 1 : 2) < issue.pageCount;
+  const tamanhoSpread = readerModoUnico ? 1 : (start === 0 ? 1 : 2);
+  return direction < 0 ? start > 0 : start + tamanhoSpread < issue.pageCount;
 }
 
 function pageSnapshot(element) {
@@ -841,13 +1167,26 @@ els.issueGrid.addEventListener('click',event=>{const tile=event.target.closest('
 $('#libraryPagination').addEventListener('click',event=>{const button=event.target.closest('[data-page]');if(!button||button.disabled)return;state.libraryPage=Number(button.dataset.page);renderGrid();requestAnimationFrame(observePdfCovers);document.querySelector('.all-issues').scrollIntoView({behavior:'smooth'});});
 $('#commandTrigger').addEventListener('click',openCommand); els.commandBackdrop.addEventListener('click',event=>{if(event.target===els.commandBackdrop)closeCommand();});
 els.searchInput.addEventListener('input',event=>applySearch(event.target.value));
+$('#searchConfirm').addEventListener('click',confirmarBuscaHome);
 function toggleYearMenu(open = $('#yearMenu').hidden) { const menu=$('#yearMenu');menu.hidden=!open;$('#yearFilter').setAttribute('aria-expanded',open);if(open)requestAnimationFrame(()=>menu.querySelector('[aria-selected="true"]')?.focus());else if(menu.contains(document.activeElement))$('#yearFilter').focus(); }
 $('#yearFilter').addEventListener('click',()=>toggleYearMenu());
+$('#yearFilter').addEventListener('keydown',event=>{if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();toggleYearMenu(true);}});
+$('#yearMenu').addEventListener('keydown',event=>{
+  const options=[...$('#yearMenu').querySelectorAll('[data-year]')];
+  const index=options.indexOf(document.activeElement);
+  const target={ArrowDown:index+1,ArrowUp:index-1,Home:0,End:options.length-1}[event.key];
+  if(target!==undefined){event.preventDefault();options[Math.max(0,Math.min(options.length-1,target))].focus();}
+  else if(event.key==='Tab')toggleYearMenu(false);
+});
 $('#yearMenu').addEventListener('click',event=>{const option=event.target.closest('[data-year]');if(option){state.year=option.dataset.year;applyFilters();toggleYearMenu(false);}});
 document.addEventListener('click',event=>{if(!event.target.closest('#yearPicker'))toggleYearMenu(false);});
-els.searchResults.addEventListener('click',event=>{const result=event.target.closest('[data-id]');if(result)openReader(result.dataset.id,result.querySelector('img'));});
+els.searchResults.addEventListener('click',event=>{
+  const result=event.target.closest('[data-id]');
+  if(!result)return;
+  openReader(result.dataset.id,result.querySelector('img'));
+});
 document.querySelectorAll('.command-item').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.command==='latest'&&state.issues[0])openReader(state.issues[0].id);else{els.searchInput.value='';state.year='all';applySearch('');closeCommand();document.querySelector('.all-issues').scrollIntoView();}}));
-$('#sortButton').addEventListener('click',()=>{state.sortDesc=!state.sortDesc;state.filtered.reverse();$('#sortButton').innerHTML=`${state.sortDesc?'Mais recentes':'Mais antigas'} <span>${state.sortDesc?'↓':'↑'}</span>`;state.active=0;state.libraryPage=1;render();});
+$('#sortButton').addEventListener('click',()=>{state.sortDesc=!state.sortDesc;state.filtered.reverse();$('#sortButton').innerHTML=`${state.sortDesc?'Mais recentes':'Mais antigas'} ${icon(state.sortDesc?'arrow-down':'arrow-up')}`;state.active=0;state.libraryPage=1;render();});
 ['#closeReader','#closeReaderX'].forEach(selector=>$(selector).addEventListener('click',closeReader));
 ['#nextPage','#readerNext'].forEach(selector=>$(selector).addEventListener('click',()=>requestPageTurn(1))); ['#prevPage','#readerPrev'].forEach(selector=>$(selector).addEventListener('click',()=>requestPageTurn(-1)));
 $('#readerFirst').addEventListener('click',()=>{if(state.readerIssue){cancelPageTurn();state.page=0;renderPages();}});
@@ -859,25 +1198,54 @@ $('#toggleThumbs').addEventListener('click',()=>{
     renderPdfThumbnails(state.readerIssue);
   }
 });
+$('#readerSearchTrigger').addEventListener('click',openReaderSearch);
+els.readerSearchBackdrop.addEventListener('click',event=>{if(event.target===els.readerSearchBackdrop)closeReaderSearch();});
+$('#readerSearchInput').addEventListener('input',renderReaderSearchResults);
+$('#readerSearchResults').addEventListener('click',event=>{
+  const button=event.target.closest('[data-page]');
+  if(!button)return;
+  irParaResultadoBusca(Number(button.dataset.page),button.dataset.palavras?JSON.parse(button.dataset.palavras):null);
+});
 els.thumbnailRail.addEventListener('click',event=>{const button=event.target.closest('[data-page]');if(button){state.page=Number(button.dataset.page);renderPages();}});
 $('#zoomIn').addEventListener('click',event=>adjustZoom(.25,event.currentTarget));
 $('#zoomOut').addEventListener('click',event=>adjustZoom(-.25,event.currentTarget));
 $('#resetZoom').addEventListener('click',()=>{state.zoom=1;applyZoom();});
 $('#toggleFullscreen').addEventListener('click',async()=>{try{if(!document.fullscreenElement)await els.reader.requestFullscreen();else await document.exitFullscreen();}catch{showToast('Tela cheia não disponível neste navegador.');}});
-$('#infoButton').addEventListener('click',()=>showToast('O acervo é atualizado automaticamente a partir da pasta de edições.'));
 document.addEventListener('keydown',event=>{
-  if(event.key==='/'&&!state.readerIssue){event.preventDefault();openCommand();}
-  if(event.key==='Escape'){toggleYearMenu(false);if(state.readerIssue)closeReader();else closeCommand();}
-  if(state.readerIssue&&event.key==='ArrowRight')requestPageTurn(1); if(state.readerIssue&&event.key==='ArrowLeft')requestPageTurn(-1);
-  if(state.readerIssue&&(event.key==='+'||event.key==='=')){state.zoom+=.25;applyZoom();}
-  if(state.readerIssue&&event.key==='-'){state.zoom-=.25;applyZoom();}
-  if(state.readerIssue&&event.key==='0'){state.zoom=1;applyZoom();}
-  if(!els.commandBackdrop.hidden&&event.key==='Enter'&&state.filtered[0])openReader(state.filtered[0].id);
+  const typing=event.target.matches?.('input,textarea,[contenteditable="true"]');
+  const commandOpen=!els.commandBackdrop.hidden;
+  const readerSearchOpen=!els.readerSearchBackdrop.hidden;
+  if(event.key==='Tab'&&(state.readerIssue||commandOpen))trapFocus(event,state.readerIssue?els.reader:els.commandBackdrop);
+  if(event.key==='/'&&!state.readerIssue&&!typing){event.preventDefault();openCommand();}
+  if(commandOpen&&!state.readerIssue&&(event.key==='ArrowDown'||event.key==='ArrowUp')){
+    const items=[els.searchInput,...els.commandBackdrop.querySelectorAll('.command-item,.result-item')];
+    const index=Math.max(0,items.indexOf(document.activeElement));
+    event.preventDefault();items[(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length].focus();
+  }
+  if(readerSearchOpen&&(event.key==='ArrowDown'||event.key==='ArrowUp')){
+    const items=[$('#readerSearchInput'),...$('#readerSearchResults').querySelectorAll('.result-item')];
+    const index=Math.max(0,items.indexOf(document.activeElement));
+    event.preventDefault();items[(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length].focus();
+  }
+  if(!state.readerIssue&&!commandOpen&&event.target.closest?.('.coverflow-wrap')&&(event.key==='ArrowLeft'||event.key==='ArrowRight')){
+    event.preventDefault();moveCover(event.key==='ArrowRight'?1:-1);
+    if(event.target.closest('.coverflow'))els.coverflow.querySelector('.cover-card.active')?.focus({preventScroll:true});
+  }
+  if(event.key==='Escape'){toggleYearMenu(false);if(readerSearchOpen)closeReaderSearch();else if(state.readerIssue)closeReader();else closeCommand();}
+  if(state.readerIssue&&!typing&&event.key==='ArrowRight')requestPageTurn(1); if(state.readerIssue&&!typing&&event.key==='ArrowLeft')requestPageTurn(-1);
+  if(state.readerIssue&&!typing&&(event.key==='+'||event.key==='=')){state.zoom+=.25;applyZoom();}
+  if(state.readerIssue&&!typing&&event.key==='-'){state.zoom-=.25;applyZoom();}
+  if(state.readerIssue&&!typing&&event.key==='0'){state.zoom=1;applyZoom();}
+  if(commandOpen&&event.key==='Enter'&&event.target===els.searchInput){event.preventDefault();confirmarBuscaHome();}
+  if(readerSearchOpen&&event.key==='Enter'&&event.target===$('#readerSearchInput')){
+    const primeiro=$('#readerSearchResults .result-item');
+    if(primeiro)irParaResultadoBusca(Number(primeiro.dataset.page),primeiro.dataset.palavras?JSON.parse(primeiro.dataset.palavras):null);
+  }
 });
 $('#bookShell').addEventListener('pointerdown', event => {
   if (state.zoom > 1.01) {
     if (event.button !== 0) return;
-    const stage = $('#readerStage');
+    const stage = $('#readerScroll');
     Object.assign(zoomPan, { active: true, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, scrollLeft: stage.scrollLeft, scrollTop: stage.scrollTop });
     $('#bookShell').classList.add('is-panning');
     $('#bookShell').setPointerCapture(event.pointerId);
@@ -898,7 +1266,7 @@ $('#bookShell').addEventListener('pointerdown', event => {
 });
 $('#bookShell').addEventListener('pointermove', event => {
   if (zoomPan.active && event.pointerId === zoomPan.pointerId) {
-    const stage = $('#readerStage');
+    const stage = $('#readerScroll');
     stage.scrollLeft = zoomPan.scrollLeft - (event.clientX - zoomPan.startX);
     stage.scrollTop = zoomPan.scrollTop - (event.clientY - zoomPan.startY);
     event.preventDefault();
@@ -922,6 +1290,12 @@ $('#bookShell').addEventListener('lostpointercapture', finishZoomPan);
 $('#bookShell').addEventListener('mousedown', event => {
   if (state.zoom > 1.01) { event.preventDefault(); event.stopPropagation(); }
 }, true);
+$('#bookShell').addEventListener('dblclick', event => {
+  if (state.zoom <= 1.01) return;
+  event.preventDefault();
+  state.zoom = 1;
+  applyZoom();
+});
 els.coverflow.addEventListener('dragstart', event => event.preventDefault());
 els.coverflow.addEventListener('pointerdown', event => {
   if (event.button !== 0) return;

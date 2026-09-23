@@ -52,6 +52,19 @@ Só isso já é suficiente: o servidor detecta a pasta, ordena as páginas pelo 
 
 Os quatro `metadata.json` incluídos usam as imagens do acervo atual como demonstração. Ao copiar os arquivos WEBP reais para cada pasta, eles passam a ser priorizados automaticamente. Se houver uma pasta e um PDF com o mesmo número, o PDF será usado para evitar uma edição duplicada.
 
+## Busca por conteúdo (OCR)
+
+A busca (`/`) também encontra páginas pelo texto que elas contêm, não só por número, data ou tags — o resultado já linka direto para a página onde a palavra foi encontrada e destaca o trecho na própria imagem.
+
+Isso depende de um passo a mais, feito com `atualizar-edicoes.bat` (ele já chama `gerar-ocr.py` sozinho, além do `gerar-edicoes.py` de sempre). Na primeira vez, instale nesta máquina:
+
+- [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki), com o pacote de idioma **português** marcado na instalação.
+- [Poppler para Windows](https://github.com/oschwartz10612/poppler-windows/releases), e adicione a pasta `Library/bin` dele ao PATH do Windows.
+
+Depois disso, é só rodar o `.bat` normalmente sempre que adicionar edições novas — o OCR roda sozinho, uma edição por vez, e só processa o que ainda não tem texto gerado (ou que teve o PDF substituído). Editar sem os dois programas instalados não quebra nada: o script avisa o que falta e o catálogo continua sendo atualizado normalmente.
+
+Limitação atual: só funciona para edições publicadas como PDF solto (Opção 1). Edições em pasta de imagens (Opção 2) ainda não têm OCR automático.
+
 ## Atalhos
 
 - `/`: abre a busca.
