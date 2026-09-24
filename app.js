@@ -1168,6 +1168,8 @@ els.issueGrid.addEventListener('click', event => {
   if (tile) openReader(tile.dataset.id, tile.querySelector('img'));
 });
 
+$('#editionPromoButton')?.addEventListener('click', () => openReader('0142'));
+
 $('#libraryPagination').addEventListener('click', event => {
   const button = event.target.closest('[data-page]');
   if (!button || button.disabled) return;

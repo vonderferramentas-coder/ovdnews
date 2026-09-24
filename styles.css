@@ -506,3 +506,25 @@ button>.icon:only-child{display:block;margin:auto}
   .title-picker .year-filter-button>span:last-child{width:20px;height:20px;margin-left:6px}
   .sort-button{white-space:nowrap;padding:0 14px;font-size:13px;flex-shrink:0}
 }
+/* Bloco promocional: chamada para a edição mais recente, entre o carrossel e a biblioteca */
+.edition-promo{padding:95px 6vw 25px}
+.edition-promo-card{position:relative;max-width:960px;margin:0 auto;transform:translateX(175px);min-height:400px;padding:48px min(6vw,64px) 48px min(42vw,410px);display:flex;align-items:center;border-radius:28px;background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.7);backdrop-filter:blur(22px) saturate(1.6);box-shadow:0 8px 28px rgba(20,20,20,.08),inset 0 1px rgba(255,255,255,.9),inset 0 0 0 1px var(--line)}
+.edition-promo-visual{position:absolute;left:0;top:50%;transform:translate(-50%,-50%);width:700px;pointer-events:none}
+.edition-promo-visual img{display:block;width:100%;height:auto;filter:drop-shadow(0 30px 45px rgba(0,0,0,.28))}
+.edition-promo-content{max-width:440px}
+.edition-promo-content h2{margin:0 0 18px;font:700 clamp(24px,2.6vw,34px)/1.15 var(--serif);letter-spacing:-.02em;color:var(--ink)}
+.edition-promo-content p{margin:0 0 26px;font-size:17px;line-height:1.6;color:#3c3d3a}
+.edition-promo-cta{appearance:none;border:0;border-radius:999px;background:#171817;color:var(--brand-yellow);font:700 15px var(--sans);padding:16px 26px;cursor:pointer;transition:.25s}
+.edition-promo-cta:hover{background:#000;transform:translateY(-1px)}
+@media(max-width:900px){
+  .edition-promo-card{max-width:520px;min-height:0;transform:none;flex-direction:column;text-align:center;padding:150px 32px 40px;gap:28px}
+  .edition-promo-visual{left:50%;top:0;transform:translate(-50%,-58%);width:min(60vw,320px)}
+  .edition-promo-content{max-width:none}
+  .edition-promo-cta{width:100%}
+}
+@media(max-width:580px){
+  .edition-promo{padding:40px 6vw 0}
+  .edition-promo-card{border-radius:22px;padding:110px 22px 34px}
+  .edition-promo-visual{width:min(74vw,300px)}
+  .edition-promo-content h2{font-size:24px}
+}
