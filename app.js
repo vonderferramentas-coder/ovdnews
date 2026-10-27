@@ -2,7 +2,7 @@
    OVD News — acervo digital de revistas
    Organização deste arquivo:
      1. Estado e constantes        6. Busca (home e dentro da edição)
-     2. Utilitários                7. Leitor (turn.js, controles, setas)
+     2. Utilitários                7. Leitor (flipbook, controles, setas)
      3. PDF e capas                8. Zoom, lupa e interação com o livro
      4. Catálogo de edições        9. Eventos da interface
      5. Home (carrossel e grade)  10. Arraste do carrossel e inicialização
@@ -47,7 +47,7 @@ const els = {
 // Estado interno do leitor / fila de capas
 let pdfModulePromise;
 let pdfCoverObserver;
-let turnBookInstance = null;      // instância jQuery do turn.js
+let turnBookInstance = null;      // instância do OvdFlipbook (vendor/flipbook.js)
 let readerRenderToken = 0;        // invalida renderizações antigas quando o leitor fecha/troca de edição
 let readerThumbsRendered = false;
 let readerFlipPending = false;    // true enquanto uma virada de página está em andamento
@@ -728,7 +728,7 @@ async function openReader(id, sourceImage = null) {
     // Pré-carrega todas as páginas antes de revelar o leitor — sem isso, ele abre já mostrando
     // o placeholder "Página N" até a renderização em segundo plano alcançar aquela página,
     // principalmente ao navegar rápido. Guarda a URL já resolvida (não a promise) num mapa à
-    // parte pra initTurnJs poder montar o book já com o conteúdo real, sem esperar de novo.
+    // parte pra initFlipbook poder montar o book já com o conteúdo real, sem esperar de novo.
     issue._readerPageUrlsReady ||= new Map();
     await Promise.all(
       pageNumbers(issue.pageCount)
@@ -750,7 +750,7 @@ async function openReader(id, sourceImage = null) {
       ? issue.pages.map((page, index) => `<button data-page="${index}" aria-label="Ir para página ${index + 1}"><canvas data-thumb-page="${page}" aria-label="Página ${index + 1}"></canvas></button>`).join('')
       : issue.pages.map((page, index) => `<button data-page="${index}" aria-label="Ir para página ${index + 1}"><img src="${page}" alt="Página ${index + 1}" loading="lazy"></button>`).join('');
     applyZoom(); closeCommand({ returnFocus: false }); $('#closeReader').focus({ preventScroll: true });
-    await initTurnJs(issue);
+    await initFlipbook(issue);
   };
   if (!animated) return reveal();
   // Mantém a abertura suave, sem compartilhar a imagem da capa com o livro.
@@ -780,12 +780,12 @@ async function renderPdfThumbnails(issue) {
   }
 }
 
-// --- 7.3 Livro (turn.js) ---
+// --- 7.3 Livro (vendor/flipbook.js) ---
 
 // Descarta o livro atual e monta um contêiner #book novo e vazio.
 function resetBook() {
   readerRenderToken += 1;
-  if (turnBookInstance) try { turnBookInstance.turn('destroy'); } catch {}
+  if (turnBookInstance) try { turnBookInstance.destroy(); } catch {}
   turnBookInstance = null;
   const mount = document.createElement('div');
   mount.className = 'book'; mount.id = 'book';
@@ -805,7 +805,7 @@ function canTurnPage(direction) {
 }
 
 // Dimensões do livro (1 página) que cabem no book-shell, mantendo a proporção da revista.
-function getTurnJsSize(paginasVisiveis = 2) {
+function getBookSize(paginasVisiveis = 2) {
   const shell = els.bookShell.getBoundingClientRect();
   const aspect = 540 / 760;
   let height = Math.max(352, Math.min(858, Math.floor(shell.height)));
@@ -814,26 +814,25 @@ function getTurnJsSize(paginasVisiveis = 2) {
   return { width, height };
 }
 
-async function initTurnJs(issue) {
+async function initFlipbook(issue) {
   resetBook();
   const token = ++readerRenderToken;
-  els.book.classList.add('turnjs-book');
+  els.book.classList.add('flipbook');
   els.book.innerHTML = pageNumbers(issue.pages.length).map(pageNumber => {
     const initial = issue.pdf ? (pageNumber === 1 && issue.cover ? issue.cover : (issue._readerPageUrlsReady?.get(pageNumber) || readerPagePlaceholder(pageNumber))) : issue.pages[pageNumber - 1];
     return `<div class="flip-page"><img data-reader-page="${pageNumber}" src="${initial}" alt="Página ${pageNumber} de ${issue.pageCount}"></div>`;
   }).join('');
   readerModoUnico = READER_SINGLE_PAGE.matches;
-  const size = getTurnJsSize(readerModoUnico ? 1 : 2);
-  const $book = window.jQuery(els.book);
-  $book.turn({ width: readerModoUnico ? size.width : size.width * 2, height: size.height, display: readerModoUnico ? 'single' : 'double', autoCenter: true, duration: 720, gradients: true, acceleration: true, elevation: 40, corners: 'all', cornerSize: 160, page: (state.page || 0) + 1 });
-  turnBookInstance = $book;
+  const size = getBookSize(readerModoUnico ? 1 : 2);
+  const book = new OvdFlipbook(els.book, { width: readerModoUnico ? size.width : size.width * 2, height: size.height, display: readerModoUnico ? 'single' : 'double', duration: 720, cornerSize: 160, page: (state.page || 0) + 1, canDrag: () => state.zoom <= ZOOMED_THRESHOLD });
+  turnBookInstance = book;
   // Classes do book-shell que controlam a lombada (gutter): escondida durante a virada, visível quando assenta.
-  $book.on('turning', () => {
+  book.on('turning', () => {
     clearTimeout(bookSettleTimer);
     els.bookShell.classList.add('is-page-flipping');
     els.bookShell.classList.remove('book-settled');
   });
-  $book.on('turned', () => {
+  book.on('turned', () => {
     readerFlipPending = false;
     clearTimeout(gutterRestoreTimer);
     els.bookShell.classList.remove('is-page-flipping', 'is-page-dragging');
@@ -869,7 +868,7 @@ function turnPage(direction) {
   const issue = state.readerIssue;
   if (!turnBookInstance || !issue || readerFlipPending || !canTurnPage(direction)) return;
   readerFlipPending = true;
-  turnBookInstance.turn(direction > 0 ? 'next' : 'previous');
+  if (!(direction > 0 ? turnBookInstance.next() : turnBookInstance.previous())) readerFlipPending = false;
   const targetPages = direction > 0 ? [state.page + 2, state.page + 3] : [state.page - 1, state.page];
   Promise.all(targetPages.filter(page => page >= 1 && page <= issue.pageCount).map(page => hydrateReaderPage(issue, page))).catch(() => {});
 }
@@ -879,16 +878,16 @@ function goToReaderPage(pageIndex) {
   const issue = state.readerIssue;
   if (!issue || !turnBookInstance) return;
   state.page = Math.max(0, Math.min(issue.pageCount - 1, pageIndex));
-  turnBookInstance.turn('page', state.page + 1);
+  turnBookInstance.page(state.page + 1);
 }
 
 // --- 7.4 Controles (indicador, progresso, botões, setas) ---
 
-// Sincroniza toda a UI do leitor com a(s) página(s) visíveis do turn.js.
+// Sincroniza toda a UI do leitor com a(s) página(s) visíveis do livro.
 function syncReaderControls() {
   const issue = state.readerIssue;
   if (!issue || !turnBookInstance) return;
-  const turnView = turnBookInstance.turn('view') || [];
+  const turnView = turnBookInstance.view() || [];
   const visible = turnView.filter(Number.isInteger).map(page => page - 1).filter(page => page >= 0 && page < issue.pageCount);
   if (!visible.length) return;
   const start = Math.min(...visible);
@@ -897,10 +896,10 @@ function syncReaderControls() {
   // No modo desktop uma página sozinha (capa/contracapa) é recentralizada no espaço de 2 páginas
   // deslocando o livro em 1/4 da largura. No modo 1 página (celular) isso nunca é necessário.
   if (readerModoUnico) {
-    els.book.style.removeProperty('--turnjs-offset');
+    els.book.style.removeProperty('--book-offset');
   } else {
-    const turnSize = turnBookInstance.turn('size');
-    els.book.style.setProperty('--turnjs-offset', !turnView[0] ? `${-Math.round(turnSize.width / 4)}px` : !turnView[1] ? `${Math.round(turnSize.width / 4)}px` : '0px');
+    const bookSize = turnBookInstance.size();
+    els.book.style.setProperty('--book-offset', !turnView[0] ? `${-Math.round(bookSize.width / 4)}px` : !turnView[1] ? `${Math.round(bookSize.width / 4)}px` : '0px');
   }
   els.bookShell.classList.toggle('book-opened', visible.length > 1);
   $('#pageIndicator').textContent = start === 0 ? `Capa · 1 de ${issue.pageCount}` : `Páginas ${start + 1}${end > start + 1 ? `–${end}` : ''} de ${issue.pageCount}`;
@@ -918,14 +917,14 @@ function syncReaderControls() {
 // No modo desktop não mede as páginas em si: durante a virada elas usam transforms 3D
 // (perspective/rotateY) que distorcem o retângulo lido via getBoundingClientRect, então a seta
 // acabava caindo perto da lombada, no centro. Em vez disso usa a mesma regra de geometria do
-// --turnjs-offset: o #book sempre ocupa a largura cheia do book-shell; com 1 página só,
+// --book-offset: o #book sempre ocupa a largura cheia do book-shell; com 1 página só,
 // ela fica recentralizada nos 50% do meio dessa largura. No modo 1 página não existe esse truque
 // de deslocamento, então mede o #book direto — ele já tem a largura exata da página visível.
 // Em ambos os casos, dividir por state.zoom devolve a posição "natural" (100%), então as setas
 // não se movem quando o usuário aplica zoom manual, só quando a página muda.
 function positionPageArrows() {
   if (!turnBookInstance || !state.readerIssue) return;
-  const view = turnBookInstance.turn('view') || [];
+  const view = turnBookInstance.view() || [];
   if (!view.some(Number.isInteger)) return;
   const prevArrow = $('#prevPage'), nextArrow = $('#nextPage');
   // Com zoom aplicado, a página ampliada pode cobrir a posição "natural" das setas.
@@ -1074,7 +1073,7 @@ els.bookShell.addEventListener('wheel', event => {
 els.bookShell.addEventListener('pointerdown', event => {
   els.bookMagnifier.classList.remove('visible');
   if (event.button !== 0) return;
-  // Começou um possível arraste de canto (turn.js): esconde a lombada até assentar.
+  // Começou um possível arraste de canto: esconde a lombada até assentar.
   clearTimeout(gutterRestoreTimer);
   els.bookShell.classList.add('is-page-dragging');
   els.bookShell.classList.remove('book-settled');
@@ -1110,7 +1109,7 @@ els.bookShell.addEventListener('pointercancel', event => { turnCornerClick = nul
 els.bookShell.addEventListener('lostpointercapture', finishZoomPan);
 els.bookShell.addEventListener('pointerleave', () => els.bookMagnifier.classList.remove('visible'));
 
-// Clique nos cantos superior/inferior de uma página vira a página (turn.js só reage a arraste).
+// Clique nos cantos superior/inferior de uma página vira a página (o livro só reage a arraste).
 els.bookShell.addEventListener('click', event => {
   if (turnCornerDragged) { turnCornerDragged = false; return; }
   turnCornerClick = null;
