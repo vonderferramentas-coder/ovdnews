@@ -1,5 +1,5 @@
 /* ==========================================================================
-   OvdFlipbook — virada de páginas em 3D, código próprio da OVD News.
+   OvdFlipbook — virada de páginas com dobra de papel, código próprio da OVD News.
    Sem dependências. Não é derivado de nenhuma biblioteca de terceiros.
 
    Uso:
@@ -10,6 +10,11 @@
    Cada filho direto de `elemento` é uma página. No modo 'double' as páginas formam
    folhas (frente = página ímpar, verso = página par seguinte); a capa fica sozinha
    à direita. No modo 'single' cada página é uma folha só com frente.
+
+   Como a dobra funciona: a folha é um retângulo. O canto solto vai até o ponto P e a
+   dobra fica na mediatriz entre o canto original e P. A parte além da dobra é refletida
+   (mostrando o verso) e o resto fica plano (mostrando a frente). Tudo em 2D, com
+   clip-path e uma matriz de reflexão, mais gradientes de sombra ao longo da dobra.
    ========================================================================== */
 (function (global) {
   'use strict';
@@ -18,10 +23,38 @@
   const easeInOut = t => (t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
   const easeOut = t => 1 - Math.pow(1 - t, 3);
   const rad = deg => deg * Math.PI / 180;
+  const deg = radians => radians * 180 / Math.PI;
 
   const DRAG_THRESHOLD = 8;     // px antes de um clique virar arraste
-  const PEEK_ANGLE = 14;        // quanto o canto levanta ao passar o mouse
-  const SHADE_STRENGTH = .34;
+  const PEEK_ANGLE = 24;        // quanto o canto levanta ao passar o mouse
+  const SINGLE_DRAG_GAIN = 2.2; // no modo página única um arraste curto já dobra bastante
+  const PAPER = '#f7f5ef';
+
+  // Recorta um polígono mantendo o lado `side` (+1/-1) da reta com normal `n` que passa por `m`.
+  function clipPolygon(points, n, m, side) {
+    const out = [];
+    const dist = point => side * ((point[0] - m.x) * n.x + (point[1] - m.y) * n.y);
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i], b = points[(i + 1) % points.length];
+      const da = dist(a), db = dist(b);
+      if (da >= 0) out.push(a);
+      if ((da > 0 && db < 0) || (da < 0 && db > 0)) {
+        const t = da / (da - db);
+        out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+      }
+    }
+    return out;
+  }
+
+  const polygonCss = points => `polygon(${points.map(p => `${p[0].toFixed(1)}px ${p[1].toFixed(1)}px`).join(',')})`;
+
+  // Gradiente que escurece a partir da dobra, na direção `v`, dentro de uma caixa w×h.
+  function foldGradient(w, h, v, m, alpha, span) {
+    const angle = Math.atan2(v.x, -v.y);
+    const length = Math.abs(w * Math.sin(angle)) + Math.abs(h * Math.cos(angle));
+    const start = length / 2 + (m.x - w / 2) * v.x + (m.y - h / 2) * v.y;
+    return `linear-gradient(${deg(angle).toFixed(2)}deg,rgba(0,0,0,${alpha}) ${start.toFixed(1)}px,rgba(0,0,0,0) ${(start + span).toFixed(1)}px)`;
+  }
 
   function Flipbook(element, options) {
     this.el = element;
@@ -37,7 +70,6 @@
     this.press = null;
     this.drag = null;
     this.peekDir = 0;
-    this.shaded = [];
     this._build();
   }
 
@@ -57,7 +89,7 @@
 
     this.stage = document.createElement('div');
     this.stage.className = 'flipbook-stage';
-    this.stage.style.cssText = `position:absolute;inset:0;perspective:${Math.round(o.height * 4)}px;perspective-origin:50% 50%`;
+    this.stage.style.cssText = 'position:absolute;inset:0';
 
     this.leaves = [];
     const step = this.single ? 1 : 2;
@@ -73,29 +105,32 @@
     this._bind();
   };
 
+  // A folha ocupa o retângulo da página direita ("referencial da folha"): x de 0 (lombada) a w.
   proto._makeLeaf = function (frontPage, backPage) {
     const el = document.createElement('div');
     el.className = 'flip-leaf';
-    el.style.cssText = `position:absolute;top:0;left:${this.single ? 0 : this.w}px;width:${this.w}px;height:${this.h}px;transform-origin:0 50%;transform-style:preserve-3d;display:none`;
-    const leaf = { el, angle: 0, front: this._makeFace(frontPage, false), back: backPage ? this._makeFace(backPage, true) : null };
-    el.appendChild(leaf.front.el);
-    if (leaf.back) el.appendChild(leaf.back.el);
+    el.style.cssText = `position:absolute;top:0;left:${this.single ? 0 : this.w}px;width:${this.w}px;height:${this.h}px;display:none`;
+    const shadow = document.createElement('div');
+    shadow.style.cssText = 'position:absolute;inset:0;pointer-events:none;display:none';
+    const leaf = { el, shadow, angle: 0, cy: this.h, dragP: null, off: { x: 0, y: 0 }, offK: 0, front: this._makeFace(frontPage), back: this._makeFace(backPage) };
+    el.append(shadow, leaf.front.el, leaf.back.el);
     return leaf;
   };
 
-  proto._makeFace = function (page, isBack) {
+  proto._makeFace = function (page) {
     const el = document.createElement('div');
     el.className = 'flip-face';
-    el.style.cssText = 'position:absolute;inset:0;overflow:hidden;backface-visibility:hidden;-webkit-backface-visibility:hidden';
-    if (isBack) el.style.transform = 'rotateY(180deg)';
-    page.style.cssText += ';position:absolute;inset:0;width:100%;height:100%';
+    el.style.cssText = `position:absolute;inset:0;overflow:hidden;transform-origin:0 0;background:${PAPER}`;
+    const content = document.createElement('div');
+    content.style.cssText = 'position:absolute;inset:0;transform-origin:0 0';
+    if (page) {
+      page.style.cssText += ';position:absolute;inset:0;width:100%;height:100%';
+      content.appendChild(page);
+    }
     const shade = document.createElement('div');
-    shade.className = 'flip-shade';
-    // A lombada fica à esquerda da frente e à direita do verso (que é visto espelhado).
-    const side = isBack ? 'left' : 'right';
-    shade.style.cssText = `position:absolute;inset:0;pointer-events:none;opacity:0;background:linear-gradient(to ${side},rgba(0,0,0,.55),rgba(0,0,0,.12) 55%,rgba(0,0,0,0))`;
-    el.append(page, shade);
-    return { el, shade };
+    shade.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+    el.append(content, shade);
+    return { el, content, shade };
   };
 
   /* ---------- Estado visível ---------- */
@@ -111,37 +146,75 @@
     const total = this.leaves.length;
     this.leaves.forEach((leaf, i) => {
       const isMoving = this.moving && this.moving.leaf === leaf;
-      if (!isMoving) this._setAngle(leaf, i < this.b ? 180 : 0, true);
+      if (isMoving) this._paint(leaf);
+      else { leaf.angle = i < this.b ? 180 : 0; this._rest(leaf, i < this.b); }
       leaf.el.style.zIndex = isMoving ? 1000 : (i < this.b ? i : total - i);
       leaf.el.style.display = this._isVisible(i) ? 'block' : 'none';
     });
-    this._shade();
   };
 
-  proto._setAngle = function (leaf, angle, skipShade) {
+  // Folha parada: ou plana à direita (frente) ou plana à esquerda (verso).
+  proto._rest = function (leaf, flipped) {
+    const { front, back } = leaf;
+    leaf.shadow.style.display = 'none';
+    front.el.style.clipPath = back.el.style.clipPath = 'none';
+    front.el.style.transform = 'none';
+    front.shade.style.background = back.shade.style.background = 'none';
+    front.el.style.display = flipped ? 'none' : 'block';
+    back.el.style.display = flipped ? 'block' : 'none';
+    back.el.style.transform = `translateX(${-this.w}px)`;
+    back.content.style.transform = 'none';
+  };
+
+  // Posição do canto solto para um ângulo de 0° (folha à direita) a 180° (à esquerda).
+  // A trajetória é uma elipse: o canto sobe um pouco, e é isso que deixa a dobra na diagonal.
+  proto._path = function (angle, cy) {
+    const t = rad(angle), lift = Math.min(this.h * .2, this.w * .35);
+    return { x: this.w * Math.cos(t), y: cy + (cy > 0 ? -1 : 1) * lift * Math.sin(t) };
+  };
+
+  proto._setAngle = function (leaf, angle) {
     leaf.angle = angle;
-    leaf.el.style.transform = angle ? `rotateY(${-angle}deg)` : 'none';
-    if (!skipShade) this._shade();
+    this._paint(leaf);
   };
 
-  // Sombras: a folha em movimento escurece conforme levanta e projeta sombra nas vizinhas.
-  proto._shade = function () {
-    this.shaded.forEach(shade => { shade.style.opacity = 0; });
-    this.shaded = [];
-    if (!this.moving) return;
-    const { leaf } = this.moving;
-    const index = this.leaves.indexOf(leaf);
-    const sin = Math.sin(rad(leaf.angle));
-    const paint = (face, amount) => {
-      if (!face || amount <= 0.005) return;
-      face.shade.style.opacity = Math.min(1, amount).toFixed(3);
-      this.shaded.push(face.shade);
-    };
-    paint(leaf.front, leaf.angle < 90 ? sin * SHADE_STRENGTH : 0);
-    paint(leaf.back, leaf.angle > 90 ? sin * SHADE_STRENGTH : 0);
-    const next = this.leaves[index + 1], prev = this.leaves[index - 1];
-    if (next) paint(next.front, sin * SHADE_STRENGTH * 1.15);
-    if (prev && !this.single) paint(prev.back, sin * SHADE_STRENGTH * 1.15);
+  // Desenha a folha em movimento com a dobra calculada a partir do canto solto P.
+  proto._paint = function (leaf) {
+    const { w, h } = this, cy = leaf.cy;
+    let p = leaf.dragP || this._path(leaf.angle, cy);
+    if (!leaf.dragP && leaf.offK > 0) p = { x: p.x + leaf.off.x * leaf.offK, y: p.y + leaf.off.y * leaf.offK };
+    // O papel não estica: P fica a no máximo `w` do ponto da lombada que está na altura do canto.
+    const reach = Math.hypot(p.x, p.y - cy);
+    if (reach > w) p = { x: p.x * w / reach, y: cy + (p.y - cy) * w / reach };
+    const vx = p.x - w, vy = p.y - cy, length = Math.hypot(vx, vy);
+    if (length < .8) { this._rest(leaf, false); return; }
+
+    const n = { x: vx / length, y: vy / length };
+    const m = { x: (w + p.x) / 2, y: (cy + p.y) / 2 };
+    const sheet = [[0, 0], [w, 0], [w, h], [0, h]];
+    const flat = clipPolygon(sheet, n, m, 1);      // lado da lombada: continua plano
+    const fold = clipPolygon(sheet, n, m, -1);     // lado do canto: dobrado por cima
+
+    const { front, back, shadow } = leaf;
+    const showFlat = flat.length >= 3, showFold = fold.length >= 3;
+    front.el.style.display = showFlat ? 'block' : 'none';
+    if (showFlat) {
+      front.el.style.clipPath = polygonCss(flat);
+      front.shade.style.background = foldGradient(w, h, n, m, .26, 70);
+    }
+    back.el.style.display = showFold ? 'block' : 'none';
+    shadow.style.display = showFold ? 'block' : 'none';
+    if (showFold) {
+      // Reflexão em torno da dobra (a mesma matriz serve para qualquer ângulo).
+      const k = 2 * (n.x * m.x + n.y * m.y);
+      const matrix = [1 - 2 * n.x * n.x, -2 * n.x * n.y, -2 * n.x * n.y, 1 - 2 * n.y * n.y, k * n.x, k * n.y];
+      back.el.style.clipPath = polygonCss(fold);
+      back.el.style.transform = `matrix(${matrix.map(v => v.toFixed(5)).join(',')})`;
+      back.content.style.transform = `translateX(${w}px) scaleX(-1)`;   // o verso é visto espelhado
+      back.shade.style.background = foldGradient(w, h, { x: -n.x, y: -n.y }, m, .34, 95);
+      shadow.style.clipPath = polygonCss(fold);
+      shadow.style.background = foldGradient(w, h, { x: -n.x, y: -n.y }, m, .42, 85);
+    }
   };
 
   /* ---------- Animação ---------- */
@@ -153,14 +226,15 @@
 
   proto._animate = function (leaf, to, duration, done, easing) {
     this._stopAnim();
-    const from = leaf.angle;
-    if (duration <= 0 || from === to) { this._setAngle(leaf, to); done?.(); return; }
+    const from = leaf.angle, startOffK = leaf.offK;
+    if (duration <= 0 || (from === to && !startOffK)) { leaf.offK = 0; this._setAngle(leaf, to); done?.(); return; }
     const anim = this.anim = { leaf };
     const start = performance.now();
     const ease = easing || easeInOut;
     const tick = now => {
       if (this.anim !== anim) return;
       const t = clamp((now - start) / duration, 0, 1);
+      leaf.offK = startOffK * (1 - ease(t));
       this._setAngle(leaf, from + (to - from) * ease(t));
       if (t < 1) anim.frame = requestAnimationFrame(tick);
       else { this.anim = null; done?.(); }
@@ -173,10 +247,12 @@
   };
 
   // Começa a mover a folha que vira no sentido `dir` (1 = próxima, -1 = anterior).
-  proto._begin = function (dir) {
+  proto._begin = function (dir, cy) {
     const leaf = dir > 0 ? this.leaves[this.b] : this.leaves[this.b - 1];
     if (!leaf || (dir > 0 && this.b >= this.maxB) || (dir < 0 && this.b <= 0)) return null;
     this._cancelPeek();
+    leaf.cy = cy === undefined ? this.h : cy;
+    leaf.dragP = null; leaf.offK = 0;
     this.moving = { leaf, dir };
     this.busy = true;
     this._layout();
@@ -187,6 +263,7 @@
   // Termina o movimento: `committed` diz se a folha acabou virada (muda a página) ou voltou.
   proto._end = function (committed) {
     const dir = this.moving.dir;
+    this.moving.leaf.offK = 0;
     if (committed) this.b += dir;
     this.moving = null;
     this.busy = false;
@@ -266,8 +343,7 @@
     if (this.single) return 2;
     const corner = Math.min(this.o.cornerSize, this.w * .4);
     if (y > corner && y < rect.height - corner) return 0;
-    const right = this.view()[1];
-    if (x >= rect.width - corner && right && this.b < this.maxB) return 1;
+    if (x >= rect.width - corner && this.view()[1] && this.b < this.maxB) return 1;
     if (x <= corner && this.b > 0) return -1;
     return 0;
   };
@@ -296,18 +372,20 @@
     if (event.button !== 0 || this.busy || !this.o.canDrag()) return;
     const hit = this._hit(event);
     if (!hit) return;
-    this.press = { id: event.pointerId, x: event.clientX, y: event.clientY, dir: hit === 2 ? 0 : hit };
+    const rect = this.el.getBoundingClientRect();
+    const cy = event.clientY - rect.top < this.h / 2 ? 0 : this.h;   // canto de cima ou de baixo
+    this.press = { id: event.pointerId, x: event.clientX, y: event.clientY, dir: hit === 2 ? 0 : hit, cy };
   };
 
-  // Ângulo da folha em arraste a partir da posição do ponteiro.
-  proto._dragAngle = function (event) {
-    const rect = this.el.getBoundingClientRect();
-    const x = event.clientX - rect.left;
+  // Posição do canto solto (referencial da folha) a partir do ponteiro.
+  proto._dragPoint = function (event) {
+    const { press, drag } = this;
     if (this.single) {
-      const span = this.w * .8, moved = (this.press.x - event.clientX) / span;
-      return this.drag.dir > 0 ? 180 * clamp(moved, 0, 1) : 180 - 180 * clamp(-moved, 0, 1);
+      const baseX = drag.dir > 0 ? this.w : -this.w;
+      return { x: baseX + (event.clientX - press.x) * SINGLE_DRAG_GAIN, y: press.cy + (event.clientY - press.y) };
     }
-    return 180 * clamp((2 * this.w - x) / (2 * this.w), 0, 1);
+    const rect = this.el.getBoundingClientRect();
+    return { x: event.clientX - rect.left - this.w, y: event.clientY - rect.top };
   };
 
   proto._pointerMove = function (event) {
@@ -319,7 +397,7 @@
         const dir = press.dir || (dx < 0 ? 1 : -1);
         if (this.single && Math.abs(dy) > Math.abs(dx)) { this.press = null; return; }   // rolagem vertical, não vira
         if (this.busy) { this.press = null; return; }
-        const leaf = this._begin(dir);
+        const leaf = this._begin(dir, press.cy);
         if (!leaf) { this.press = null; return; }
         this.drag = { id: event.pointerId, dir, leaf, lastX: event.clientX, lastTime: performance.now(), velocity: 0 };
         try { this.el.setPointerCapture(event.pointerId); } catch { /* ignora */ }
@@ -327,7 +405,10 @@
       const now = performance.now(), elapsed = now - this.drag.lastTime;
       if (elapsed > 0) this.drag.velocity = (event.clientX - this.drag.lastX) / elapsed;
       this.drag.lastX = event.clientX; this.drag.lastTime = now;
-      this._setAngle(this.drag.leaf, this._dragAngle(event));
+      const leaf = this.drag.leaf;
+      leaf.dragP = this._dragPoint(event);
+      leaf.angle = deg(Math.acos(clamp(leaf.dragP.x / this.w, -1, 1)));
+      this._paint(leaf);
       event.preventDefault();
       return;
     }
@@ -340,13 +421,17 @@
     if (!drag || drag.id !== event.pointerId) return;
     this.drag = null;
     try { if (this.el.hasPointerCapture(event.pointerId)) this.el.releasePointerCapture(event.pointerId); } catch { /* ignora */ }
-    const angle = drag.leaf.angle;
+    const leaf = drag.leaf, angle = leaf.angle;
+    // Continua a partir de onde o ponteiro soltou: o desvio em relação à trajetória some aos poucos.
+    const path = this._path(angle, leaf.cy);
+    leaf.off = { x: leaf.dragP.x - path.x, y: leaf.dragP.y - path.y };
+    leaf.offK = 1; leaf.dragP = null;
     // Termina a virada se passou da metade do caminho ou se foi um gesto rápido no mesmo sentido.
     const flick = drag.dir > 0 ? drag.velocity < -.5 : drag.velocity > .5;
     const committed = event.type !== 'pointercancel' && (flick || (drag.dir > 0 ? angle > 70 : angle < 110));
     const target = committed ? (drag.dir > 0 ? 180 : 0) : (drag.dir > 0 ? 0 : 180);
     const distance = Math.abs(target - angle) / 180;
-    this._animate(drag.leaf, target, Math.max(160, this.o.duration * distance * .8), () => this._end(committed), easeOut);
+    this._animate(leaf, target, Math.max(200, this.o.duration * distance * .85), () => this._end(committed), easeOut);
   };
 
   // Ao passar o mouse num canto, a folha levanta um pouco (indica que dá para virar).
@@ -358,17 +443,20 @@
     this._cancelPeek();
     const leaf = dir > 0 ? this.leaves[this.b] : this.leaves[this.b - 1];
     if (!leaf) return;
+    const rect = this.el.getBoundingClientRect();
+    leaf.cy = event.clientY - rect.top < this.h / 2 ? 0 : this.h;
+    leaf.dragP = null; leaf.offK = 0;
     this.peekDir = dir;
     this.moving = { leaf, dir };
     this._layout();
-    this._animate(leaf, dir > 0 ? PEEK_ANGLE : 180 - PEEK_ANGLE, 170, null, easeOut);
+    this._animate(leaf, dir > 0 ? PEEK_ANGLE : 180 - PEEK_ANGLE, 190, null, easeOut);
   };
 
   proto._relaxPeek = function () {
     if (!this.peekDir || this.busy) return;
     const { leaf, dir } = this.moving;
     this.peekDir = 0;
-    this._animate(leaf, dir > 0 ? 0 : 180, 170, () => {
+    this._animate(leaf, dir > 0 ? 0 : 180, 190, () => {
       if (this.busy || this.peekDir) return;
       this.moving = null;
       this._layout();
