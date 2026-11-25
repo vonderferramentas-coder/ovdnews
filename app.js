@@ -246,7 +246,7 @@ function queuePdfCover(issue, priority = false) {
 // --- 3.1 Pré-carregamento do leitor ---
 // Baixa o PDF e renderiza as primeiras páginas antes do clique, pra "Ler mais" abrir na hora.
 // Só a edição em foco é aquecida; guarda as WARM_KEEP mais recentes e libera as outras da memória.
-const WARM_PAGES = 3;   // capa + primeiro par de páginas (as demais vêm com o leitor aberto)
+const WARM_PAGES = 5;   // capa + 4 páginas à frente: a "gaveta" que já fica pronta antes do clique
 const WARM_KEEP = 3;
 const warmedIssues = [];
 let warmTimer = 0;
@@ -902,7 +902,8 @@ async function hydrateReaderPage(issue, pageNumber, token = readerRenderToken) {
   return token === readerRenderToken && state.readerIssue === issue;
 }
 
-// Carrega as páginas uma a uma, sempre a mais próxima de onde o leitor está (primeiro à frente,
+// Carrega as páginas uma a uma, sempre a mais próxima de onde o leitor está, então as 4 páginas à frente da
+// tela (a gaveta) são sempre as primeiras da fila. Primeiro à frente,
 // depois as de trás). A posição é reavaliada a cada página: ao virar, o carregamento já segue
 // dali (6-7 depois que passa pro 4-5, e assim por diante).
 async function hydrateReaderPages(issue, token) {
