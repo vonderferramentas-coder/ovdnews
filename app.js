@@ -243,6 +243,49 @@ function queuePdfCover(issue, priority = false) {
   return issue._coverQueuedPromise;
 }
 
+// --- 3.1 Pré-carregamento do leitor ---
+// Baixa o PDF e renderiza as primeiras páginas antes do clique, pra "Ler mais" abrir na hora.
+// Só a edição em foco é aquecida; guarda as WARM_KEEP mais recentes e libera as outras da memória.
+const WARM_PAGES = 5;   // capa + dois primeiros pares de páginas
+const WARM_KEEP = 3;
+const warmedIssues = [];
+let warmTimer = 0;
+
+function releaseIssue(issue) {
+  if (issue === state.readerIssue || issue._opening) return;
+  issue._released = true;
+  issue._pdfDoc?.destroy?.();
+  issue._pdfDoc = issue._pdfPromise = issue._warmPromise = issue._readerPageUrlsReady = null;
+  issue._readerPageUrls?.forEach(entry => Promise.resolve(entry).then(url => URL.revokeObjectURL(url)).catch(() => {}));
+  issue._readerPageUrls = null;
+}
+
+function warmIssue(issue, force = false) {
+  if (!issue?.pdf) return Promise.resolve();
+  if (!force && (FILE_MODE || navigator.connection?.saveData)) return Promise.resolve();
+  const known = warmedIssues.indexOf(issue);
+  if (known !== -1) warmedIssues.splice(known, 1);
+  warmedIssues.push(issue);
+  while (warmedIssues.length > WARM_KEEP) releaseIssue(warmedIssues.shift());
+  if (issue._warmPromise) return issue._warmPromise;
+  issue._released = false;
+  issue._warmPromise = (async () => {
+    await ensurePdfIssue(issue);
+    issue._readerPageUrlsReady ||= new Map();
+    for (const pageNumber of pageNumbers(Math.min(issue.pageCount, WARM_PAGES))) {
+      if (issue._released) return;
+      if (pageNumber === 1 && issue.cover) continue;
+      try { issue._readerPageUrlsReady.set(pageNumber, await renderPdfPageUrl(issue, pageNumber)); } catch {}
+    }
+  })().catch(() => { issue._warmPromise = null; });
+  return issue._warmPromise;
+}
+
+function scheduleWarm(issue, delay = 700) {
+  clearTimeout(warmTimer);
+  if (issue?.pdf) warmTimer = setTimeout(() => warmIssue(issue), delay);
+}
+
 // Gera as capas sob demanda: as da grade quando chegam perto da tela; as do carrossel
 // (até 2 de cada lado da ativa) com prioridade, das mais distantes para as mais próximas.
 function observePdfCovers() {
@@ -354,6 +397,7 @@ function renderCoverflow() {
     positionCoverCards(issues);
   }
   renderCoverMeta();
+  scheduleWarm(issues[state.active]);
 }
 
 // Com uma busca confirmada, o heading ganha uma linha "Resultados de busca por: X" acima do
@@ -724,23 +768,18 @@ async function openReader(id, sourceImage = null) {
   }
   if (issue.pdf) {
     showToast(`Abrindo ${issue.title}...`);
-    try { await ensurePdfIssue(issue); } catch { showToast('Não foi possível abrir este PDF.'); return; }
-    // Pré-carrega todas as páginas antes de revelar o leitor — sem isso, ele abre já mostrando
-    // o placeholder "Página N" até a renderização em segundo plano alcançar aquela página,
-    // principalmente ao navegar rápido. Guarda a URL já resolvida (não a promise) num mapa à
-    // parte pra initFlipbook poder montar o book já com o conteúdo real, sem esperar de novo.
-    issue._readerPageUrlsReady ||= new Map();
-    await Promise.all(
-      pageNumbers(issue.pageCount)
-        .filter(pageNumber => !(pageNumber === 1 && issue.cover))
-        .map(async pageNumber => {
-          try { issue._readerPageUrlsReady.set(pageNumber, await renderPdfPageUrl(issue, pageNumber)); } catch {}
-        })
-    );
+    issue._opening = true;   // impede que o pré-carregamento libere esta edição da memória
+    try { await ensurePdfIssue(issue); } catch { issue._opening = false; showToast('Não foi possível abrir este PDF.'); return; }
+    // Só as primeiras páginas precisam estar prontas pra revelar o leitor (o pré-carregamento
+    // da 3.1 costuma já tê-las feito); o restante é renderizado em segundo plano por
+    // hydrateReaderPages. A URL já resolvida fica num mapa à parte pra initFlipbook montar
+    // o book com o conteúdo real, sem esperar de novo.
+    await warmIssue(issue, true);
   }
   const animated = sourceImage && document.startViewTransition && !REDUCED_MOTION.matches;
   const reveal = async () => {
     state.readerIssue = issue;
+    issue._opening = false;
     state.page = 0;
     state.zoom = 1; readerThumbsRendered = false;
     els.reader.classList.toggle('is-opening', Boolean(animated));
@@ -878,6 +917,9 @@ function goToReaderPage(pageIndex) {
   const issue = state.readerIssue;
   if (!issue || !turnBookInstance) return;
   state.page = Math.max(0, Math.min(issue.pageCount - 1, pageIndex));
+  // Pula direto pra uma página que o carregamento em segundo plano ainda pode não ter alcançado.
+  const start = getSpreadStart(state.page);
+  Promise.all([start + 1, start + 2].filter(page => page <= issue.pageCount).map(page => hydrateReaderPage(issue, page))).catch(() => {});
   turnBookInstance.page(state.page + 1);
 }
 
@@ -1160,6 +1202,11 @@ els.coverflow.addEventListener('click', event => {
   const index = Number(card.dataset.index);
   if (index === state.active) openReader(state.filtered[index].id, card.querySelector('img'));
   else { state.active = index; renderCoverflow(); observePdfCovers(); }
+});
+
+els.issueGrid.addEventListener('pointerover', event => {
+  const tile = event.target.closest('.issue-tile');
+  if (tile) scheduleWarm(state.issues.find(issue => issue.id === tile.dataset.id), 250);
 });
 
 els.issueGrid.addEventListener('click', event => {
