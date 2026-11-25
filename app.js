@@ -246,7 +246,7 @@ function queuePdfCover(issue, priority = false) {
 // --- 3.1 Pré-carregamento do leitor ---
 // Baixa o PDF e renderiza as primeiras páginas antes do clique, pra "Ler mais" abrir na hora.
 // Só a edição em foco é aquecida; guarda as WARM_KEEP mais recentes e libera as outras da memória.
-const WARM_PAGES = 5;   // capa + dois primeiros pares de páginas
+const WARM_PAGES = 3;   // capa + primeiro par de páginas (as demais vêm com o leitor aberto)
 const WARM_KEEP = 3;
 const warmedIssues = [];
 let warmTimer = 0;
@@ -767,14 +767,20 @@ async function openReader(id, sourceImage = null) {
     return;
   }
   if (issue.pdf) {
-    showToast(`Abrindo ${issue.title}...`);
     issue._opening = true;   // impede que o pré-carregamento libere esta edição da memória
-    try { await ensurePdfIssue(issue); } catch { issue._opening = false; showToast('Não foi possível abrir este PDF.'); return; }
-    // Só as primeiras páginas precisam estar prontas pra revelar o leitor (o pré-carregamento
-    // da 3.1 costuma já tê-las feito); o restante é renderizado em segundo plano por
-    // hydrateReaderPages. A URL já resolvida fica num mapa à parte pra initFlipbook montar
-    // o book com o conteúdo real, sem esperar de novo.
-    await warmIssue(issue, true);
+    if (issue.cover && issue.pageCount) {
+      // Já tem capa e número de páginas (guardados desde o carrossel): abre na hora só com a
+      // capa; o PDF é baixado e as páginas renderizadas com o leitor aberto (hydrateReaderPages).
+      issue.pages = issue.pages?.length ? issue.pages : pageNumbers(issue.pageCount);
+    } else {
+      // Sem isso o leitor não sabe quantas páginas montar: abre o PDF antes.
+      showToast(`Abrindo ${issue.title}...`);
+      try {
+        await ensurePdfIssue(issue);
+        issue._readerPageUrlsReady ||= new Map();
+        issue._readerPageUrlsReady.set(1, await renderPdfPageUrl(issue, 1));
+      } catch { issue._opening = false; showToast('Não foi possível abrir este PDF.'); return; }
+    }
   }
   const animated = sourceImage && document.startViewTransition && !REDUCED_MOTION.matches;
   const reveal = async () => {
@@ -896,9 +902,18 @@ async function hydrateReaderPage(issue, pageNumber, token = readerRenderToken) {
   return token === readerRenderToken && state.readerIssue === issue;
 }
 
+// Carrega as páginas uma a uma, sempre a mais próxima de onde o leitor está (primeiro à frente,
+// depois as de trás). A posição é reavaliada a cada página: ao virar, o carregamento já segue
+// dali (6-7 depois que passa pro 4-5, e assim por diante).
 async function hydrateReaderPages(issue, token) {
-  for (const pageNumber of pageNumbers(issue.pageCount)) {
-    if (!await hydrateReaderPage(issue, pageNumber, token)) return;
+  const pending = new Set(pageNumbers(issue.pageCount));
+  while (pending.size) {
+    if (token !== readerRenderToken || state.readerIssue !== issue) return;
+    const here = getSpreadStart(state.page) + 1;
+    const left = [...pending].sort((a, b) => a - b);
+    const next = left.find(page => page >= here) ?? left[left.length - 1];
+    pending.delete(next);
+    try { if (!await hydrateReaderPage(issue, next, token)) return; } catch { /* página com erro: segue pras outras */ }
   }
 }
 
