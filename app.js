@@ -339,16 +339,34 @@ async function fetchIssuesData() {
   }
 }
 
+// Data impressa na capa das edições em PDF 41–118, na ordem dos arquivos (que não é sempre a
+// cronológica). Edições bimestrais guardam o primeiro mês. Ao adicionar uma edição, inclua aqui.
+const COVER_DATES_FROM_41 = `
+  2005-05 2005-06 2005-07 2005-08 2005-09 2005-10 2005-11 2005-12 2006-01 2006-02
+  2006-03 2006-05 2006-09 2006-11 2007-03 2007-01 2007-05 2006-07 2007-07 2007-09
+  2007-11 2008-01 2008-03 2008-07 2008-09 2009-01 2009-03 2009-05 2009-07 2009-09
+  2009-11 2010-01 2010-03 2010-04 2010-05 2010-06 2010-07 2010-08 2010-09 2010-10
+  2010-11 2011-01 2011-02 2011-03 2011-04 2011-05 2011-06 2011-07 2011-08 2011-09
+  2011-10 2011-11 2011-12 2012-01 2012-03 2012-04 2012-05 2012-06 2012-07 2012-08
+  2012-09 2012-10 2012-11 2012-12 2013-01 2013-02 2013-03 2013-04 2013-05 2013-07
+  2013-08 2013-09 2013-10 2013-12 2014-02 2014-03 2014-05 2014-07
+`.trim().split(/\s+/);
+
+// O catálogo não traz a data das edições em PDF: 1–40 seguem a numeração (12 por ano desde
+// 2002) e 41 em diante vêm da tabela acima.
+function knownIssueDate(number) {
+  if (number >= 1 && number <= 40) return `${2002 + Math.floor((number - 1) / 12)}-${String((number - 1) % 12 + 1).padStart(2, '0')}`;
+  return COVER_DATES_FROM_41[number - 41] || '';
+}
+
 async function loadIssues() {
   try {
     const data = await fetchIssuesData();
     data.issues.forEach(issue => {
-      // Edições 1–40 não trazem data no catálogo: deduz o ano/mês pela numeração (12 edições por ano desde 2002).
-      const number = Number(issue.number);
-      if (!issue.year && number >= 1 && number <= 40) {
-        issue.year = 2002 + Math.floor((number - 1) / 12);
-        issue.date ||= `${issue.year}-${String((number - 1) % 12 + 1).padStart(2, '0')}`;
-      }
+      const date = issue.year ? '' : knownIssueDate(Number(issue.number));
+      if (!date) return;
+      issue.date ||= date;
+      issue.year = Number(date.slice(0, 4));
     });
     state.issues = data.issues;
     state.filtered = [...state.issues];
