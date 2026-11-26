@@ -331,9 +331,14 @@ async function fetchIssuesData() {
   } catch {
     const response = await fetch('edicoes.json', { cache: 'no-store' });
     const data = await response.json();
+    // O site pode estar numa subpasta (GitHub Pages: /ovdnews/), então os caminhos que começam
+    // na raiz viram relativos.
+    // (em PDFs já abertos alguma vez, `pages` traz números em vez de caminhos)
+    const relative = value => (typeof value === 'string' && value.startsWith('/') ? `.${value}` : value);
     data.issues.forEach(issue => {
-      if (issue.cover?.startsWith('/capas/')) issue.cover = '';
-      if (issue.pdf?.startsWith('/')) issue.pdf = `.${issue.pdf}`;
+      issue.cover = issue.cover?.startsWith('/capas/') ? '' : relative(issue.cover);
+      issue.pdf = relative(issue.pdf);
+      issue.pages = (issue.pages || []).map(relative);
     });
     return data;
   }
