@@ -6,3 +6,7 @@ Thumbs.db
 dados/ocr/.estado.json
 .pnpm-store/
 __pycache__/
+
+# PDFs publicados pelo repositório ovdnews-acervo (edições 091 em diante)
+arquivos/09[1-9].pdf
+arquivos/1[0-9][0-9].pdf

@@ -359,9 +359,19 @@ function knownIssueDate(number) {
   return COVER_DATES_FROM_41[number - 41] || '';
 }
 
+// O GitHub Pages limita cada site a 1 GB: no site publicado, os PDFs a partir desta edição vêm
+// do repositório ovdnews-acervo (mesmo domínio). No localhost todos saem da pasta arquivos.
+const ARCHIVE_REPO_FROM = 91;
+const ON_GITHUB_PAGES = location.hostname.endsWith('.github.io');
+
 async function loadIssues() {
   try {
     const data = await fetchIssuesData();
+    data.issues.forEach(issue => {
+      if (ON_GITHUB_PAGES && issue.pdf && Number(issue.number) >= ARCHIVE_REPO_FROM) {
+        issue.pdf = `/ovdnews-acervo/arquivos/${issue.pdf.split('/').pop()}`;
+      }
+    });
     data.issues.forEach(issue => {
       const date = issue.year ? '' : knownIssueDate(Number(issue.number));
       if (!date) return;

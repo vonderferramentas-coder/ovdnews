@@ -26,6 +26,15 @@ arquivos/
 
 A primeira página vira a capa automaticamente e o leitor detecta a quantidade de páginas do PDF. Não é preciso criar pasta, imagens ou metadados.
 
+### Publicação no GitHub (edições 091 em diante)
+
+O GitHub Pages limita cada site a 1 GB, então o acervo está dividido em dois repositórios:
+
+- `ovdnews` (este): o site e as edições até a 090.
+- [`ovdnews-acervo`](https://github.com/vonderferramentas-coder/ovdnews-acervo): os PDFs da 091 em diante, na pasta `arquivos`.
+
+Na sua máquina, continue colocando todos os PDFs em `arquivos`. Para publicar uma edição 091 ou maior, envie o PDF ao `ovdnews-acervo` (o `.gitignore` impede que ele vá para este repositório) e envie o catálogo atualizado para este. Inclua também a data dela em `COVER_DATES_FROM_41`, no `app.js`.
+
 ### Opção 2: páginas já convertidas
 
 Crie uma nova pasta dentro de `arquivos`, seguindo o padrão:
