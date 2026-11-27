@@ -344,7 +344,7 @@ async function fetchIssuesData() {
   }
 }
 
-// Data impressa na capa das edições em PDF 41–118, na ordem dos arquivos (que não é sempre a
+// Data impressa na capa das edições em PDF a partir do arquivo 041, na ordem dos arquivos (que não é sempre a
 // cronológica). Edições bimestrais guardam o primeiro mês. Ao adicionar uma edição, inclua aqui.
 const COVER_DATES_FROM_41 = `
   2005-05 2005-06 2005-07 2005-08 2005-09 2005-10 2005-11 2005-12 2006-01 2006-02
@@ -354,7 +354,9 @@ const COVER_DATES_FROM_41 = `
   2010-11 2011-01 2011-02 2011-03 2011-04 2011-05 2011-06 2011-07 2011-08 2011-09
   2011-10 2011-11 2011-12 2012-01 2012-03 2012-04 2012-05 2012-06 2012-07 2012-08
   2012-09 2012-10 2012-11 2012-12 2013-01 2013-02 2013-03 2013-04 2013-05 2013-07
-  2013-08 2013-09 2013-10 2013-12 2014-02 2014-03 2014-05 2014-07
+  2013-08 2013-09 2013-10 2013-12 2014-02 2014-03 2014-05 2014-07 2014-09 2015-09
+  2016-04 2015-02 2016-11 2017-12 2018-08 2018-11 2019-03 2019-06 2019-09 2019-12
+  2020-03 2020-07 2020-12 2021-06
 `.trim().split(/\s+/);
 
 // O catálogo não traz a data das edições em PDF: 1–40 seguem a numeração (12 por ano desde
@@ -362,6 +364,33 @@ const COVER_DATES_FROM_41 = `
 function knownIssueDate(number) {
   if (number >= 1 && number <= 40) return `${2002 + Math.floor((number - 1) / 12)}-${String((number - 1) % 12 + 1).padStart(2, '0')}`;
   return COVER_DATES_FROM_41[number - 41] || '';
+}
+
+// Número impresso na capa quando difere do nome do arquivo (há edições faltando e algumas fora
+// de ordem). As capas 045–049 trazem 57–61 por erro da época: valem os números da sequência.
+function printedNumber(file) {
+  const avulsas = { 53: 54, 54: 55, 55: 57, 57: 58, 58: 53, 64: 65, 65: 66, 120: 128, 121: 129, 122: 125 };
+  if (avulsas[file]) return avulsas[file];
+  if (file >= 66 && file <= 81) return file + 2;
+  if (file >= 82 && file <= 94) return file + 3;
+  if (file >= 95 && file <= 119) return file + 4;
+  if (file >= 123 && file <= 134) return file + 7;
+  return file;
+}
+
+// Passa o catálogo do número do arquivo para o número da revista e reordena. O id e o caminho
+// do PDF continuam pelo arquivo (é por eles que o texto da busca e a capa são encontrados).
+function useCoverNumbers(issues) {
+  issues.forEach(issue => {
+    if (!issue.pdf) return;
+    const file = Number(issue.number);
+    const number = printedNumber(file);
+    if (number === file) return;
+    issue.number = number;
+    issue.title = `Edição nº ${number}`;
+    issue.tags = issue.tags.map(tag => (tag === String(file) ? String(number) : tag));
+  });
+  issues.sort((a, b) => b.number - a.number);
 }
 
 // O GitHub Pages limita cada site a 1 GB: no site publicado, os PDFs a partir desta edição vêm
@@ -383,6 +412,7 @@ async function loadIssues() {
       issue.date ||= date;
       issue.year = Number(date.slice(0, 4));
     });
+    useCoverNumbers(data.issues);   // por último: as duas etapas acima usam o número do arquivo
     state.issues = data.issues;
     state.filtered = [...state.issues];
     renderYearMenu();
@@ -755,11 +785,17 @@ function destacarPalavras(numero, palavras) {
   destaqueTimer = setTimeout(() => pagina.querySelectorAll('.ocr-destaque').forEach(el => el.classList.add('sumindo')), 2400);
 }
 
+// Só marca depois que a imagem da página fica pronta (num PDF pode levar alguns segundos);
+// antes disso a marca apareceria e sumiria sobre o fundo de carregamento.
+async function destacarQuandoCarregar(numero, palavras) {
+  if (await hydrateReaderPage(state.readerIssue, numero).catch(() => false)) destacarPalavras(numero, palavras);
+}
+
 function irParaResultadoBusca(pagina, palavras) {
   if (!state.readerIssue) return;
   goToReaderPage(pagina - 1);
   closeReaderSearch({ returnFocus: false });
-  if (palavras && palavras.length) destacarPalavras(pagina, palavras);
+  if (palavras && palavras.length) destacarQuandoCarregar(pagina, palavras);
 }
 // Abre o resultado representado por um botão .result-item da busca interna.
 function abrirResultadoLeitor(button) {
@@ -788,13 +824,14 @@ function moveFocusInList(event, items) {
 
 // --- 7.2 Abrir e fechar ---
 
-async function openReader(id, sourceImage = null) {
+// `achado` (resultado da busca por palavras) faz a edição abrir direto na página, com o termo marcado.
+async function openReader(id, sourceImage = null, achado = null) {
   const issue = state.issues.find(item => item.id === String(id));
   if (!issue) return;
   readerReturnFocus = els.commandBackdrop.hidden ? document.activeElement : commandReturnFocus;
   if (FILE_MODE && issue.pdf) {
     // Sem servidor não dá pra usar o leitor: abre o PDF direto em outra aba.
-    window.open(issue.pdf, '_blank', 'noopener');
+    window.open(achado ? `${issue.pdf}#page=${achado.pagina}` : issue.pdf, '_blank', 'noopener');
     closeCommand();
     return;
   }
@@ -818,7 +855,7 @@ async function openReader(id, sourceImage = null) {
   const reveal = async () => {
     state.readerIssue = issue;
     issue._opening = false;
-    state.page = 0;
+    state.page = achado ? achado.pagina - 1 : 0;
     state.zoom = 1; readerThumbsRendered = false;
     els.reader.classList.toggle('is-opening', Boolean(animated));
     els.reader.hidden = false; document.body.style.overflow = 'hidden';
@@ -828,6 +865,7 @@ async function openReader(id, sourceImage = null) {
       : issue.pages.map((page, index) => `<button data-page="${index}" aria-label="Ir para página ${index + 1}"><img src="${page}" alt="Página ${index + 1}" loading="lazy"></button>`).join('');
     applyZoom(); closeCommand({ returnFocus: false }); $('#closeReader').focus({ preventScroll: true });
     await initFlipbook(issue);
+    if (achado) destacarQuandoCarregar(achado.pagina, achado.palavras);
   };
   if (!animated) return reveal();
   // Mantém a abertura suave, sem compartilhar a imagem da capa com o livro.
@@ -1312,7 +1350,7 @@ els.searchInput.addEventListener('input', event => applySearch(event.target.valu
 $('#searchConfirm').addEventListener('click', confirmarBuscaHome);
 els.searchResults.addEventListener('click', event => {
   const result = event.target.closest('[data-id]');
-  if (result) openReader(result.dataset.id, result.querySelector('img'));
+  if (result) openReader(result.dataset.id, result.querySelector('img'), localizarNoOcr(result.dataset.id, normalize(state.query.trim())));
 });
 // Atalhos do painel de busca: "ver edição mais recente" e "mostrar todas".
 document.querySelectorAll('.command-item').forEach(button => button.addEventListener('click', () => {

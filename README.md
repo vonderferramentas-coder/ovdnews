@@ -26,6 +26,8 @@ arquivos/
 
 A primeira página vira a capa automaticamente e o leitor detecta a quantidade de páginas do PDF. Não é preciso criar pasta, imagens ou metadados.
 
+Do arquivo 053 em diante o nome nem sempre é o número da revista: o site mostra o número impresso na capa, pela função `printedNumber` do `app.js`. Ao adicionar uma edição, use o próximo nome de arquivo livre (a 004 é a exceção: é a revista nº 4), registre o número dela em `printedNumber` e acrescente a data na tabela `COVER_DATES_FROM_41`, em que a posição corresponde ao número do arquivo.
+
 ### Publicação no GitHub (edições 091 em diante)
 
 O GitHub Pages limita cada site a 1 GB, então o acervo está dividido em dois repositórios:
