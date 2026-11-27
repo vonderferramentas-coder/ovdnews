@@ -388,7 +388,6 @@ async function loadIssues() {
     renderYearMenu();
     $('#scanStatus').textContent = `${state.issues.length} edições sincronizadas`;
     render();
-    precarregarOcr();
   } catch (error) {
     $('#emptyState').hidden = false;
     $('#emptyState').textContent = 'Não foi possível carregar o acervo.';
@@ -563,12 +562,11 @@ function carregarOcrEdicao(issue) {
   return ocrCarregando[issue.id];
 }
 
-// Carrega o texto de todas as edições sozinho, em segundo plano, assim que o navegador estiver
-// ocioso — pra busca já responder na hora quando a pessoa digitar, sem esperar o primeiro clique.
+// Carrega o texto de todas as edições assim que a busca é aberta, pra ele já estar chegando
+// enquanto a pessoa digita. Não é baixado na abertura do site: são vários MB, que disputariam
+// a internet com as capas e as páginas.
 function precarregarOcr() {
-  const iniciar = () => state.issues.forEach(issue => carregarOcrEdicao(issue));
-  if ('requestIdleCallback' in window) requestIdleCallback(iniciar, { timeout: 4000 });
-  else setTimeout(iniciar, 800);
+  state.issues.forEach(issue => carregarOcrEdicao(issue));
 }
 
 // --- 6.2 Localizar o termo nas páginas ---
@@ -678,6 +676,7 @@ function openCommand() {
   if (els.commandBackdrop.hidden) commandReturnFocus = document.activeElement;
   els.commandBackdrop.hidden = false;
   $('#commandTrigger').setAttribute('aria-expanded', 'true');
+  precarregarOcr();
   setTimeout(() => els.searchInput.focus(), 40);
 }
 // resetQuery=false preserva a pesquisa (usado ao CONFIRMAR: Enter ou clicar na lupa, que deixam
@@ -741,8 +740,8 @@ function resetReaderSearch() {
 
 // Desenha um retângulo amarelo sobre cada palavra encontrada e o some depois de 2,4 s.
 let destaqueTimer = 0;
-function destacarPalavras(palavras) {
-  const pagina = els.book.querySelector(`.p${state.page + 1}`);
+function destacarPalavras(numero, palavras) {
+  const pagina = els.book.querySelector(`[data-reader-page="${numero}"]`)?.closest('.flip-page');
   if (!pagina) return;
   pagina.querySelectorAll('.ocr-destaque').forEach(el => el.remove());
   palavras.forEach(palavra => {
@@ -760,7 +759,7 @@ function irParaResultadoBusca(pagina, palavras) {
   if (!state.readerIssue) return;
   goToReaderPage(pagina - 1);
   closeReaderSearch({ returnFocus: false });
-  if (palavras && palavras.length) destacarPalavras(palavras);
+  if (palavras && palavras.length) destacarPalavras(pagina, palavras);
 }
 // Abre o resultado representado por um botão .result-item da busca interna.
 function abrirResultadoLeitor(button) {
